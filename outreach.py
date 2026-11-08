@@ -233,8 +233,10 @@ def chatgpt_prompt(lead: dict, settings: dict[str, str]) -> str:
         situation = "has no website that I could find"
     elif status == "SOCIAL ONLY":
         situation = "only has a social media page" + (f" ({link})" if link else "") + ", no real website"
+    elif status in ("TERRIBLE WEBSITE", "POOR WEBSITE"):
+        situation = "has a website, but it is slow / outdated / hard to use on a phone: [say what is wrong]"
     else:
-        situation = "has a website that looks outdated: [say what is wrong]"
+        situation = "has a website: [say what could be improved]"
     town = str(lead.get("Town", "") or "")
     noun = business_type(str(lead.get("Name", "")), str(lead.get("Types", "") or ""), "local business")
     first = str(lead.get("Director Name", "") or "").split()[0] if str(lead.get("Director Name", "") or "").strip() else "unknown"

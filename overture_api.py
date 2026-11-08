@@ -19,7 +19,7 @@ from typing import Any
 import requests
 
 from geoapify_api import clean_phone
-from website_classifier import classify_website
+from website_classifier import best_social, classify_website, ensure_scheme, split_socials
 
 FALLBACK_RELEASE = "2026-09-23.1"
 STAC_CATALOG = "https://stac.overturemaps.org/catalog.json"
@@ -193,8 +193,12 @@ def _text(value) -> str:
 
 
 def _as_list(values) -> list:
-    """Overture list columns arrive as lists/arrays, or as NA/None when empty."""
-    return list(values) if values is not None and hasattr(values, "__len__") else []
+    """Overture list columns arrive as lists/arrays (rarely a single string), or as NA/None when empty."""
+    if values is None:
+        return []
+    if isinstance(values, str):
+        return [values] if values.strip() else []
+    return list(values) if hasattr(values, "__len__") else []
 
 
 def _first(values) -> str:
@@ -293,16 +297,24 @@ def search_overture(
     df["has_site"] = df["websites"].apply(
         lambda ws: any(classify_website(w)[0] == "HAS WEBSITE" for w in _as_list(ws))
     )
-    # Leads without a real website first (that is what we are looking for), then most reliable
-    df = df.sort_values(["has_site", "confidence", "km"], ascending=[True, False, True])
+    # Keep the most reliable, closest listings — the cap must not throw away
+    # has-site leads: after enrichment those become the terrible-website
+    # priority leads. Opportunity ranking happens later (sort_by_priority).
+    df = df.sort_values(["confidence", "km"], ascending=[False, True])
     df = df.head(min(max_results, MAX_OVERTURE_RESULTS))
 
     leads: list[dict[str, Any]] = []
     for r in df.to_dict("records"):
         websites = _as_list(r["websites"])
         website = next((w for w in websites if classify_website(w)[0] == "HAS WEBSITE"), "")
-        social = _first(r["socials"]) or next(
-            (w for w in websites if classify_website(w)[0] == "SOCIAL ONLY"), "")
+        # EVERY public social page they list (Facebook / Instagram / TikTok / …) —
+        # kept even when a real website exists. "Socials" holds them all,
+        # "Social Link" the single most useful one.
+        socials = split_socials(
+            list(_as_list(r["socials"]))
+            + [w for w in websites if classify_website(w)[0] == "SOCIAL ONLY"]
+        )
+        social = best_social(socials)
         phone_display, phone_digits = clean_phone(_first(r["phones"]))
         address = ", ".join(str(p).strip() for p in (r["street"], r["locality"], r["postcode"], r["country"])
                             if isinstance(p, str) and p.strip())
@@ -317,6 +329,8 @@ def search_overture(
                 "Intl Phone": phone_digits,
                 "Email": _first(r["emails"]),
                 "Website": website or social,      # only a social page → shows up as SOCIAL ONLY
+                "Social Link": social,             # their best social page (Facebook first)
+                "Socials": "\n".join(socials),     # all of them, one per line
                 "Rating": None,
                 "Reviews": None,
                 "Business Status": "CLOSED_PERMANENTLY" if closed else "OPERATIONAL",

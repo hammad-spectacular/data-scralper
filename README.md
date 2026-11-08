@@ -16,6 +16,7 @@ messages, a free sample-website mockup, follow-up reminders and a client tracker
 | `GEOAPIFY_API_KEY` | Geoapify | free tier |
 | `COMPANIES_HOUSE_API_KEY` | new UK companies + directors | free |
 | `GOOGLE_PLACES_API_KEY` | Google Places (ratings) | free quota, then paid — set a quota cap first |
+| `PAGESPEED_API_KEY` | Website quality analysis (detects poor/terrible sites) | free tier |
 | `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPENROUTER_API_KEY` | **AI website generator** (use any one) | free tiers (limits change — check the provider console) |
 
 Copy `.env.example` to `.env` and fill in what you use. Never share `.env`.

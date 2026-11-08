@@ -76,6 +76,30 @@ def save_leads(df: pd.DataFrame, search_label: str = "") -> None:
         )
 
 
+# Columns filled by the social / 🎬 video scan (app._scan_leads) that a batch job
+# writes back into the saved table.
+SCAN_COLUMNS = ("Socials", "Social Link", "Video Content", "Video Sources", "Video Links")
+
+
+def merge_scan_results(saved: pd.DataFrame, updated: pd.DataFrame) -> pd.DataFrame:
+    """
+    Copy a batch scan's results (social links + video verdicts) from the `updated`
+    rows back into the full `saved` table by place_id, then re-score so priorities
+    reflect the new verdicts. Everything else — including your own edits — is kept.
+    """
+    if saved.empty or updated.empty or "place_id" not in saved.columns or "place_id" not in updated.columns:
+        return saved
+    from lead_scorer import score_dataframe          # local import: scorer is standalone
+
+    out = saved.set_index("place_id", drop=False)
+    upd = updated.set_index("place_id")
+    cols = [c for c in SCAN_COLUMNS if c in upd.columns]
+    common = out.index.intersection(upd.index)
+    for col in cols:
+        out.loc[common, col] = upd.loc[common, col]
+    return score_dataframe(out.reset_index(drop=True))
+
+
 def load_leads() -> pd.DataFrame:
     """All saved leads, most recently seen first (empty DataFrame if none)."""
     with _connect() as conn:

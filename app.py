@@ -28,7 +28,7 @@ from countries import COUNTRIES, DEFAULT_COUNTRY
 from companies_house import CompaniesHouseDB, parse_uploaded_companies_file
 from companies_house_api import MAX_COMPANIES, SIC_PRESETS, search_companies, sic_codes_for
 from geoapify_api import GEOAPIFY_CATEGORIES, search_geoapify
-from lead_scorer import SCORE_WEIGHTS, score_dataframe
+from lead_scorer import SCORE_WEIGHTS, score_dataframe, sort_by_priority
 from mockup import build_zip, render_mockup, slug
 from outreach import (
     DEFAULT_SETTINGS, PLACEHOLDERS, SETTINGS_FILE, add_outreach, chatgpt_prompt, load_settings,
@@ -38,7 +38,12 @@ from pipeline import STATUSES, contacts_per_day, due_frame, reply_rate, status_c
 from overture_api import MAX_OVERTURE_RESULTS, OVERTURE_CATEGORIES, search_overture
 from places_api import CATEGORY_TYPES, MAX_PLACES_RESULTS, search_places
 from ai_generator import AIError, PROVIDERS as AI_PROVIDERS, STYLES as AI_STYLES, generate_site, website_prompt
-from website_classifier import classify_website
+from website_classifier import (
+    best_social, classify_website, ensure_scheme, order_socials, reclassify_as_poor,
+    social_label, split_socials,
+)
+from pagespeed_api import analyze_website, calculate_quality_score
+from lead_scanner import scan_leads, scan_saved_leads
 
 # ---------------------------------------------------------------------------
 # Config & page setup
@@ -139,7 +144,29 @@ GOOGLE = "Google Places (New)"
 COMPANIES_HOUSE = "Companies House API (new UK companies)"
 
 CONTACTED_OPTIONS = STATUSES
-NEEDS_STATUSES = ["NO WEBSITE", "SOCIAL ONLY"]
+NEEDS_STATUSES = ["TERRIBLE WEBSITE", "POOR WEBSITE", "NO WEBSITE", "SOCIAL ONLY"]
+
+# Filter groups on the Leads tab, listed in sales-priority order (first = contact first).
+OPPORTUNITY_GROUPS = {
+    "🔴 Terrible / poor website (top priority)": ("TERRIBLE WEBSITE", "POOR WEBSITE"),
+    "🚫 No website": ("NO WEBSITE",),
+    "📱 Has public socials (no website)": ("SOCIAL ONLY",),
+    "🌐 Has a working website": ("HAS WEBSITE",),
+}
+STATUS_TONES = {
+    "TERRIBLE WEBSITE": "red",
+    "NO WEBSITE": "red",
+    "POOR WEBSITE": "amber",
+    "SOCIAL ONLY": "amber",
+    "HAS WEBSITE": "green",
+}
+# 'Online presence' filter on the Leads tab (first entry = no filtering).
+ONLINE_FILTERS = (
+    "🌐 Everything",
+    "🌐 Any online presence",
+    "🎬 Makes videos for their biz",
+    "🚫 No online presence at all",
+)
 SOURCE_LABELS = {
     OVERTURE: "Overture Maps",
     GEOAPIFY: "Geoapify / OpenStreetMap",
@@ -148,7 +175,8 @@ SOURCE_LABELS = {
 }
 STRING_COLS = [
     "Name", "Address", "Town", "Phone", "Intl Phone", "Website", "Email", "Business Status", "Types",
-    "Director Name",
+    "Director Name", "Extracted Phone", "Extracted Email", "Social Link", "Socials",
+    "Video Content", "Video Sources", "Video Links",
 ]
 
 
@@ -272,8 +300,51 @@ def _google_search_url(query: str) -> str:
     return "https://www.google.com/search?" + urllib.parse.urlencode({"q": query})
 
 
+def _scan_leads(df: pd.DataFrame, find_socials: bool = True,
+                extract_contacts: bool = False, check_videos: bool = True) -> pd.DataFrame:
+    """
+    Drive lead_scanner.scan_leads — the shared page-visit pass that fills
+    Extracted Phone / Extracted Email, Socials / Social Link and the video
+    verdicts (Video Content: YES / NO / UNKNOWN / blank + Video Sources +
+    Video Links = direct URLs of their actual videos) —
+    with a Streamlit progress bar. Used by new searches and the saved-leads
+    batch button.
+    """
+    if df.empty or not (extract_contacts or find_socials or check_videos):
+        return df
+    holder = st.empty()
+
+    def _progress(frac: float, text: str) -> None:
+        holder.progress(frac, text=text)
+
+    try:
+        return scan_leads(df, find_socials=find_socials, extract_contacts=extract_contacts,
+                          check_videos=check_videos, progress=_progress)
+    finally:
+        holder.empty()
+
+
+def _first_video(links: str) -> str:
+    """First playable URL from a newline-separated 'Video Links' cell ('' if none)."""
+    for line in str(links or "").splitlines():
+        line = line.strip()
+        if line.startswith("http"):
+            return line
+    return ""
+
+
+def _with_video_link(df: pd.DataFrame) -> pd.DataFrame:
+    """Add 'Video Link' = their first actual video (used by buttons, tables, CSVs)."""
+    if "Video Links" not in df.columns:
+        df["Video Links"] = ""
+    df["Video Link"] = df["Video Links"].fillna("").astype(str).map(_first_video)
+    return df
+
+
 def _enrich(raw: list[dict[str, Any]], ch_db: CompaniesHouseDB | None, default_cc: str,
-            hide_closed: bool, source: str = "", skip_chains: bool = False) -> pd.DataFrame:
+            hide_closed: bool, source: str = "", skip_chains: bool = False,
+            analyze_quality: bool = False, extract_contacts: bool = False,
+            find_socials: bool = True, check_videos: bool = True) -> pd.DataFrame:
     """Turn raw provider rows into the scored results table."""
     df = pd.DataFrame(raw)
     for col in STRING_COLS:
@@ -293,9 +364,68 @@ def _enrich(raw: list[dict[str, Any]], ch_db: CompaniesHouseDB | None, default_c
         chain_key = df["Name"].str.lower().str.replace(r"[^a-z0-9]", "", regex=True)
         df = df[chain_key.map(chain_key.value_counts()) < 3].reset_index(drop=True)
 
+    # Website / social URLs: make absolute, then classify the website
+    df["Website"] = [ensure_scheme(w) for w in df["Website"]]
     classified = [classify_website(w) for w in df["Website"]]
     df["Website Status"] = [c[0] for c in classified]
-    df["Social Link"] = [c[1] or "" for c in classified]
+
+    # Every social we know about, from all sources: the provider's list
+    # (Overture ships Facebook/Instagram/TikTok/…), its single "Social Link",
+    # and the URL classification found (a SOCIAL ONLY "website" is one too).
+    provider_socials = df["Socials"] if "Socials" in df.columns else pd.Series("", index=df.index)
+    provider_social = df["Social Link"] if "Social Link" in df.columns else pd.Series("", index=df.index)
+    social_lists = [
+        order_socials(
+            split_socials(psoc) + split_socials(plink) + ([c[1]] if c[1] else [])
+        )
+        for psoc, plink, c in zip(provider_socials, provider_social, classified)
+    ]
+    df["Socials"] = ["\n".join(lst) for lst in social_lists]
+    df["Social Link"] = [best_social(lst) for lst in social_lists]
+
+    # Visit each lead's page (optional) — socials, extra contacts, video check
+    df["Video Content"] = ""
+    df["Video Sources"] = ""
+    df["Video Links"] = ""
+    _scan_leads(df, find_socials=find_socials, extract_contacts=extract_contacts,
+                check_videos=check_videos)
+    _with_video_link(df)
+    if not (extract_contacts or find_socials or check_videos):
+        df["Extracted Phone"] = ["" for _ in range(len(df))]
+        df["Extracted Email"] = ["" for _ in range(len(df))]
+
+    # Analyze website quality using PageSpeed (optional, for HAS WEBSITE leads).
+    # Quality < 40 → TERRIBLE WEBSITE (top priority), < 50 → POOR WEBSITE.
+    if analyze_quality:
+        pagespeed_key = os.getenv("PAGESPEED_API_KEY", "")
+        n_sites = int((df["Website Status"] == "HAS WEBSITE").sum())
+        holder = st.empty() if n_sites else None
+        done = 0
+        quality_scores = []
+        for idx, row in df.iterrows():
+            if row["Website Status"] == "HAS WEBSITE" and row["Website"]:
+                try:
+                    result = analyze_website(row["Website"], strategy="mobile", api_key=pagespeed_key)
+                    quality_score = calculate_quality_score(result)
+                    quality_scores.append(quality_score)
+                except Exception:
+                    quality_scores.append(None)
+                done += 1
+                if holder is not None:
+                    holder.progress(done / n_sites, text=f"Analyzing website quality… {done}/{n_sites}")
+            else:
+                quality_scores.append(None)
+        if holder is not None:
+            holder.empty()
+        df["Quality Score"] = quality_scores
+
+        # Flip bad websites into POOR / TERRIBLE so they become priority leads
+        df["Website Status"] = [
+            reclassify_as_poor(status, score)
+            for status, score in zip(df["Website Status"], df.get("Quality Score", [None] * len(df)))
+        ]
+    else:
+        df["Quality Score"] = [None for _ in range(len(df))]
 
     # Director: keep one already supplied (Companies House API / CSV), else look it up in the CSV index
     use_ch = ch_db is not None and ch_db.has_directors
@@ -324,9 +454,53 @@ def _enrich(raw: list[dict[str, Any]], ch_db: CompaniesHouseDB | None, default_c
 
 
 def _needs_view(df: pd.DataFrame) -> pd.DataFrame:
-    """Needs-Website leads sorted by score. Deterministic, so callbacks can rebuild it."""
+    """Needs-Website leads (incl. terrible/poor) by sales priority. Deterministic, so callbacks can rebuild it."""
     needs = df[df["Website Status"].isin(NEEDS_STATUSES)]
-    return needs.sort_values("Lead Score", ascending=False, kind="stable").reset_index(drop=True)
+    return sort_by_priority(needs)
+
+
+def _leads_view() -> pd.DataFrame:
+    """
+    The current search results exactly as the Leads table shows them:
+    filtered by the 'Show lead types' multiselect + the 'Online presence'
+    filter, ordered by sales priority (🎬 video + no site → terrible website
+    → no website → socials → working site), then Lead Score.
+    Rebuilt identically by the data_editor callback so row edits hit the right lead.
+    """
+    df = st.session_state["df"]
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = apply_cache_to_df(df, st.session_state["cache"])
+    df = add_outreach(df, outreach_settings, st.session_state.get("search_label", ""), default_cc)
+    selected = st.session_state.get("opp_status_filter", list(OPPORTUNITY_GROUPS))
+    statuses = {s for group in selected for s in OPPORTUNITY_GROUPS.get(group, ())}
+    if not statuses:
+        return pd.DataFrame(columns=df.columns)
+    df = df[df["Website Status"].isin(statuses)]
+
+    # 🌐 Online presence filter: website, socials, or confirmed video content
+    online_choice = st.session_state.get("online_filter", ONLINE_FILTERS[0])
+    if online_choice != ONLINE_FILTERS[0]:
+        web = df["Website"].fillna("").astype(str).str.strip().ne("") if "Website" in df.columns \
+            else pd.Series(False, index=df.index)
+        soc = (
+            df["Socials"].fillna("").astype(str).str.strip().ne("")
+            | df["Social Link"].fillna("").astype(str).str.strip().ne("")
+        ) if "Social Link" in df.columns else pd.Series(False, index=df.index)
+        videos = (
+            df["Video Content"].fillna("").astype(str).str.strip().str.upper().eq("YES")
+            if "Video Content" in df.columns else pd.Series(False, index=df.index)
+        )
+        if online_choice == ONLINE_FILTERS[1]:        # Any online presence
+            df = df[web | soc | videos]
+        elif online_choice == ONLINE_FILTERS[2]:      # 🎬 Makes videos
+            df = df[videos]
+        elif online_choice == ONLINE_FILTERS[3]:      # 🚫 No online presence
+            df = df[~(web | soc | videos)]
+        if df.empty:
+            return pd.DataFrame(columns=st.session_state["df"].columns)
+
+    return sort_by_priority(df)
 
 
 def _store_and_filter(df: pd.DataFrame, label: str, hide_contacted: bool, only_new: bool) -> pd.DataFrame:
@@ -379,7 +553,35 @@ def _prepare_saved(df: pd.DataFrame) -> pd.DataFrame | None:
         return None
     for col in _STRING_RESTORE:
         df[col] = df[col].fillna("").astype(str) if col in df.columns else ""
+    _with_video_link(df)
     return score_dataframe(df)
+
+
+def _scan_saved_leads() -> str:
+    """
+    Batch job for the sidebar button: run the social scrape + video check over
+    every saved lead that's still missing them (lead_scanner holds the logic),
+    write the results back to leads.db (your Manual Email / Contacted edits live
+    in cache.json — untouched), and refresh the list if saved leads are on screen.
+    """
+    holder = st.empty()
+
+    def _progress(frac: float, text: str) -> None:
+        holder.progress(frac, text=text)
+
+    try:
+        saved, msg = scan_saved_leads(progress=_progress)
+    finally:
+        holder.empty()
+
+    if msg.startswith("✅ Done"):
+        viewing_saved = st.session_state.get("search_label", "x") == "" and             st.session_state.get("df") is not None
+        if viewing_saved and not saved.empty:
+            st.session_state["df"] = _prepare_saved(saved.copy())
+            msg += " The open list is refreshed."
+        else:
+            msg += " Reopen them with '📂 Open all saved leads'."
+    return msg
 
 
 def _on_edit(editor_key: str, view_name: str) -> None:
@@ -389,9 +591,10 @@ def _on_edit(editor_key: str, view_name: str) -> None:
     if edited:
         if view_name == "followups":
             view = _followup_df(int(st.session_state.get("followup_days", 4)))
+        elif view_name == "needs":
+            view = _leads_view()          # must match the table's filter + order exactly
         else:
-            df = apply_cache_to_df(st.session_state["df"], cache)
-            view = df if view_name == "all" else _needs_view(df)
+            view = apply_cache_to_df(st.session_state["df"], cache)
         if apply_edits(edited, view, cache):
             save_cache(cache)
     st.session_state["edit_ver"] += 1
@@ -522,6 +725,11 @@ with st.sidebar:
     st.markdown("##### 🗂️ Your leads")
     st.caption(f"{lead_store.count():,} leads saved in leads.db — kept after you close the app.")
     load_saved = st.button("📂 Open all saved leads", width="stretch")
+    if st.button("🎬 Find socials + videos for saved leads", width="stretch",
+                 help="Scrapes each saved lead's website for social links and checks whether they post "
+                      "video (YouTube videos tab / TikTok count / players on their site). One quick request per "
+                      "lead with a website — the results are written back to leads.db."):
+        st.session_state["scan_saved"] = True
     if st.button("💾 Prepare backup (.zip)", width="stretch"):
         st.session_state["backup_zip"] = _backup_zip()
     if st.session_state.get("backup_zip"):
@@ -598,7 +806,8 @@ with st.sidebar:
     with st.expander("🔑 API keys status"):
         for label, env in (
             ("Geoapify", "GEOAPIFY_API_KEY"), ("Google Places", "GOOGLE_PLACES_API_KEY"),
-            ("Companies House", "COMPANIES_HOUSE_API_KEY"), ("Gemini (AI)", "GEMINI_API_KEY"),
+            ("Companies House", "COMPANIES_HOUSE_API_KEY"), ("PageSpeed (terrible-website check)", "PAGESPEED_API_KEY"),
+            ("Gemini (AI)", "GEMINI_API_KEY"),
             ("Groq (AI)", "GROQ_API_KEY"), ("OpenRouter (AI)", "OPENROUTER_API_KEY"),
         ):
             st.write(("✅ " if _has_key(env) else "➖ ") + label)
@@ -608,8 +817,11 @@ with st.sidebar:
         for desc, weight in SCORE_WEIGHTS.items():
             st.write(f"• {desc}: **{weight} pts**")
         st.caption(
-            "Total max = 100 pts. Without rating/review data (Geoapify) the score is "
-            "website status + phone only, rescaled to 100. Closed businesses score 0."
+            "Leads are always listed by priority first: 1 makes videos + no website → "
+            "2 terrible website → 3 poor → 4 no website → 5 public socials → 6 working website; "
+            "Lead Score breaks ties (video-makers get a small bump inside their tier). "
+            "Without rating/review data the score is website + phone + email rescaled to 100. "
+            "Closed businesses score 0."
         )
 
 
@@ -749,11 +961,53 @@ with st.container(border=True, key="searchcard"):
             help="Drops well-known brands and any name that appears 3+ times in the same search "
                  "(Costa, McDonald's, Greggs…). They are not your clients.",
         )
+        analyze_quality = o3.checkbox(
+            "Find terrible websites (PageSpeed quality check)", value=True,
+            help="Scores every real website (0–100). Below 50 = POOR, below 40 = TERRIBLE — those become your "
+                 "top-priority leads. Needs the free PAGESPEED_API_KEY in .env (restart after adding it). "
+                 "One API call per website, so big searches take a bit longer.",
+        )
+        extract_contacts = o3.checkbox(
+            "Find extra phone/email from websites (scrape pages)", value=False,
+            help="Also keeps any extra phone numbers and emails printed on the page. "
+                 "Slower — one request per lead. Social links are found separately (below).",
+        )
+        find_socials = o3.checkbox(
+            "Find their socials — Facebook / Instagram / TikTok …", value=True,
+            help="Visits each lead's website and picks up every social page linked in its footer or "
+                 "structured data (JSON-LD), plus the ones Overture already lists. Free, one quick "
+                 "request per lead that has a website. Untick to search faster.",
+        )
+        check_videos = o3.checkbox(
+            "🎬 Check if they make videos (TikTok / Instagram / YouTube)", value=True,
+            help="Answers 'do they post video content for their business?'. Uses the page already "
+                 "fetched above (embedded players = instant YES), then their public YouTube videos tab "
+                 "and TikTok profile (1 request each, free). Instagram/Facebook hide behind "
+                 "login walls → shown as UNKNOWN, never guessed. Adds 🎬 leads to the 'Online presence' filter.",
+        )
+        if analyze_quality and not _has_key("PAGESPEED_API_KEY"):
+            st.warning(
+                "🔑 **PAGESPEED_API_KEY is missing** — terrible/poor website detection is disabled until you add it. "
+                "It's free: create a key in Google Cloud Console (PageSpeed Insights API), put it in `.env`, "
+                "then restart the app. Until then, leads keep their 'Has website' status."
+            )
 
 
 # ---------------------------------------------------------------------------
 # Search / Process logic
 # ---------------------------------------------------------------------------
+
+if st.session_state.pop("scan_saved", False):
+    try:
+        _msg = _scan_saved_leads()
+        if _msg.startswith("✅"):
+            st.success(_msg)
+        elif _msg.startswith("⚠️"):
+            st.warning(_msg)
+        else:
+            st.info(_msg)
+    except Exception as e:
+        st.error(f"❌ Video / social scan failed: {e}")
 
 if load_saved:
     saved = _prepare_saved(lead_store.load_leads())
@@ -772,7 +1026,11 @@ elif run_file:
             raw = parse_uploaded_companies_file(ch_file.getvalue(), max_rows=int(csv_limit))
         if raw:
             with st.spinner(f"Enriching and scoring {len(raw):,} leads…"):
-                enriched = _enrich(raw, st.session_state["ch_db"], default_cc, False, "CSV file")
+                enriched = _enrich(
+                    raw, st.session_state["ch_db"], default_cc, False, "CSV file", False,
+                    bool(analyze_quality and _has_key("PAGESPEED_API_KEY")), bool(extract_contacts),
+                    bool(find_socials), bool(check_videos),
+                )
                 st.session_state["notes"] = [f"Processed {len(raw):,} companies directly from '{ch_file.name}'!"]
                 st.session_state["df"] = _store_and_filter(enriched, ch_file.name, False, False)
         st.session_state["search_done"] = True
@@ -814,7 +1072,9 @@ elif run_search:
         if raw:
             with st.spinner(f"Enriching {len(raw)} results…"):
                 enriched = _enrich(
-                    raw, st.session_state["ch_db"], default_cc, hide_closed, SOURCE_LABELS[provider], skip_chains
+                    raw, st.session_state["ch_db"], default_cc, hide_closed, SOURCE_LABELS[provider], skip_chains,
+                    bool(analyze_quality and _has_key("PAGESPEED_API_KEY")), bool(extract_contacts),
+                    bool(find_socials), bool(check_videos),
                 )
                 st.session_state["df"] = _store_and_filter(
                     enriched, st.session_state["search_label"], hide_contacted, only_new
@@ -874,8 +1134,9 @@ if st.session_state["search_done"]:
             "or choosing a different Category / City."
         )
 
-tab_needs, tab_all, tab_follow, tab_clients, tab_downloads = st.tabs(
-    ["🎯 Leads to contact", "📊 All results", "📅 Follow-ups & stats", "💼 Clients", "⬇️ Downloads"]
+tab_needs, tab_all, tab_online, tab_follow, tab_clients, tab_downloads = st.tabs(
+    ["🎯 Leads to contact", "📊 All results", "🌐 Online presence",
+     "📅 Follow-ups & stats", "💼 Clients", "⬇️ Downloads"]
 )
 ver = st.session_state["edit_ver"]
 
@@ -894,8 +1155,10 @@ with tab_all:
         st.subheader(f"All Results — {len(df)} businesses found")
 
         display_cols = [
-            "Name", "Address", "Phone", "Phone Type", "Local Time", "Call Window", "Website Status", "Social Link", "Rating", "Reviews",
-            "Lead Score", "Best Channel", "Google Maps", "Business Status", "Source", "First Seen", "Manual Email", "Contacted",
+            "Name", "Address", "Phone", "Phone Type", "Local Time", "Call Window", "Website Status", "Website",
+            "Video Content", "Video Link", "Video Sources", "Social Link", "Socials", "Quality Score", "Rating", "Reviews",
+            "Priority", "Lead Score",
+            "Best Channel", "Google Maps", "Business Status", "Source", "First Seen", "Manual Email", "Contacted",
         ]
         display_cols = [c for c in display_cols if c in df.columns]
 
@@ -905,7 +1168,38 @@ with tab_all:
                 "Name": st.column_config.TextColumn("Name", width="medium"),
                 "Address": st.column_config.TextColumn("Address", width="large"),
                 "Website Status": st.column_config.TextColumn("Website Status", width="small"),
-                "Social Link": st.column_config.LinkColumn("Social Link", width="medium"),
+                "Website": st.column_config.LinkColumn(
+                    "Website", width="medium", help="Their own website — open it to see what's wrong with it.",
+                ),
+                "Social Link": st.column_config.LinkColumn(
+                    "Social Link", width="medium", help="Their best social page (Facebook first), if found.",
+                ),
+                "Socials": st.column_config.TextColumn(
+                    "Socials", width="large",
+                    help="Every social page found for this lead (Facebook / Instagram / TikTok / …), one per line.",
+                ),
+                "Video Content": st.column_config.TextColumn(
+                    "🎬 Video Content", width="small",
+                    help="Do they post video for their business? YES = seen their videos (embedded player, "
+                         "YouTube feed or TikTok count) · NO = checked, nothing · UNKNOWN = login wall / blocked.",
+                ),
+                "Video Link": st.column_config.LinkColumn(
+                    "🎬 Video", width="medium", display_text="▶ Watch video",
+                    help="A direct link to one of their actual business videos (YouTube / TikTok / embedded on their site).",
+                ),
+                "Video Sources": st.column_config.TextColumn(
+                    "🎬 Video Sources", width="large",
+                    help="Where the verdict came from: TikTok video count, YouTube feed, player on their site…",
+                ),
+                "Quality Score": st.column_config.NumberColumn(
+                    "Quality (0–100)", format="%d",
+                    help="PageSpeed website quality. Below 50 = poor, below 40 = terrible (top priority).",
+                ),
+                "Priority": st.column_config.NumberColumn(
+                    "Priority", format="%d", width="small",
+                    help="1 = makes videos + no website (contact first) · 2 = terrible website · 3 = poor · "
+                         "4 = no website · 5 = public socials · 6 = working website.",
+                ),
                 "Google Maps": st.column_config.LinkColumn("Google Maps", display_text="📍 Open map", width="small"),
                 "Rating": st.column_config.NumberColumn("⭐ Rating", format="%.1f"),
                 "Reviews": st.column_config.NumberColumn("Reviews"),
@@ -923,10 +1217,130 @@ with tab_all:
         )
 
         counts = df["Website Status"].value_counts()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("🚫 No Website", int(counts.get("NO WEBSITE", 0)))
-        c2.metric("📱 Social Only", int(counts.get("SOCIAL ONLY", 0)))
-        c3.metric("✅ Has Website", int(counts.get("HAS WEBSITE", 0)))
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🔴 Terrible / Poor", int(counts.get("TERRIBLE WEBSITE", 0) + counts.get("POOR WEBSITE", 0)),
+                  help="Has a website, but it's bad — your best pitch.")
+        c2.metric("🚫 No Website", int(counts.get("NO WEBSITE", 0)))
+        c3.metric("📱 Social Only", int(counts.get("SOCIAL ONLY", 0)))
+        c4.metric("✅ Has Website", int(counts.get("HAS WEBSITE", 0)))
+
+
+# ============================================================
+# TAB 1b — ONLINE PRESENCE (their videos + their real website, as links)
+# ============================================================
+
+with tab_online:
+    if df is None or df.empty:
+        _empty_state("No leads yet", "Run a search above, or open your saved leads from the sidebar.")
+    else:
+        st.subheader(f"🌐 Online presence — {len(df):,} businesses")
+
+        _modes = ("🌐 Any online presence", "🎬 Makes videos for their biz", "🚫 No online presence at all")
+        mode = st.radio(
+            "Show", _modes, index=0, horizontal=True, key="online_tab_mode",
+            help="Online presence = a website, public socials, or confirmed video content.",
+        )
+
+        _web = df["Website"].fillna("").astype(str).str.strip().ne("") if "Website" in df.columns \
+            else pd.Series(False, index=df.index)
+        _soc = (
+            df["Socials"].fillna("").astype(str).str.strip().ne("")
+            | df["Social Link"].fillna("").astype(str).str.strip().ne("")
+        ) if "Social Link" in df.columns else pd.Series(False, index=df.index)
+        _vid = (
+            df["Video Content"].fillna("").astype(str).str.strip().str.upper().eq("YES")
+            if "Video Content" in df.columns else pd.Series(False, index=df.index)
+        )
+        _online = _web | _soc | _vid
+        if mode == _modes[1]:
+            keep = _vid
+        elif mode == _modes[2]:
+            keep = ~_online
+        else:
+            keep = _online
+        view = sort_by_priority(df[keep]) if keep.any() else pd.DataFrame(columns=df.columns)
+
+        if view.empty:
+            st.info("No leads match this view.")
+        else:
+            # All counts come from `view` itself — sort_by_priority resets the index,
+            # so anything aligned back onto df would count the wrong rows.
+            _vstatus = view["Website Status"] if "Website Status" in view.columns \
+                else pd.Series("", index=view.index)
+            _vcontent = view["Video Content"] if "Video Content" in view.columns \
+                else pd.Series("", index=view.index)
+            n_video = int(_vcontent.fillna("").astype(str).str.strip().str.upper().eq("YES").sum())
+            _vlinks = view["Video Link"].fillna("").astype(str) if "Video Link" in view.columns \
+                else pd.Series("", index=view.index)
+            n_links = int(_vlinks.str.strip().ne("").sum())
+            _vsite = view["Website"].fillna("").astype(str) if "Website" in view.columns \
+                else pd.Series("", index=view.index)
+            n_site = int((_vsite.str.strip().ne("") & _vstatus.ne("SOCIAL ONLY")).sum())
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("🎯 Leads in view", f"{len(view):,}")
+            m2.metric("🎬 Make videos", f"{n_video:,}")
+            m3.metric("▶ With a video link", f"{n_links:,}",
+                      help="A direct URL to one of their actual business videos.")
+            m4.metric("🌐 With their own website", f"{n_site:,}",
+                      help="SOCIAL ONLY leads are excluded — their 'website' is just their social page.")
+
+            # The table itself: video link + real website + social, all clickable
+            def _col(name: str) -> pd.Series:
+                return view[name].fillna("") if name in view.columns else pd.Series("", index=view.index)
+
+            _tbl = pd.DataFrame({
+                "Name": _col("Name"),
+                "Town": _col("Town"),
+                "Status": _col("Website Status").astype(str).str.title(),
+                "🎬 Videos": _col("Video Content"),
+                "🎬 Video": _col("Video Link"),
+                "🌐 Website": [
+                    "" if str(s) == "SOCIAL ONLY" else str(w)
+                    for s, w in zip(_col("Website Status"), _col("Website"))
+                ],
+                "📱 Social": _col("Social Link"),
+                "📞 Phone": _col("Phone"),
+                "⭐ Rating": _col("Rating"),
+                "Priority": _col("Priority"),
+                "Score": _col("Lead Score"),
+            })
+            st.dataframe(
+                _tbl, hide_index=True, width="stretch",
+                height=min(35 * len(_tbl) + 40, 620),
+                column_config={
+                    "Name": st.column_config.TextColumn("Name", width="medium"),
+                    "🎬 Videos": st.column_config.TextColumn(
+                        "🎬 Videos", width="small",
+                        help="YES = seen their videos · NO = checked, nothing · UNKNOWN = login wall.",
+                    ),
+                    "🎬 Video": st.column_config.LinkColumn(
+                        "🎬 Their video", display_text="▶ Watch", width="medium",
+                        help="A direct link to one of their actual business videos.",
+                    ),
+                    "🌐 Website": st.column_config.LinkColumn(
+                        "🌐 Their website", display_text="Open site", width="medium",
+                        help="Their existing website (blank for SOCIAL ONLY leads — no real site).",
+                    ),
+                    "📱 Social": st.column_config.LinkColumn(
+                        "📱 Social", display_text="Open page", width="medium",
+                    ),
+                    "⭐ Rating": st.column_config.NumberColumn("⭐ Rating", format="%.1f"),
+                    "Priority": st.column_config.NumberColumn(
+                        "Priority", format="%d", width="small",
+                        help="1 = makes videos + no website · 2 = terrible · 3 = poor · 4 = no website · "
+                             "5 = socials · 6 = working website.",
+                    ),
+                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
+                },
+            )
+            n_video_rows = int(_tbl["🎬 Video"].fillna("").astype(str).str.strip().ne("").sum())
+            if n_video_rows:
+                st.caption(
+                    f"▶ {n_video_rows:,} of {len(_tbl):,} leads have a direct link to one of their videos "
+                    "(🎬 Their video column) — open it before you pitch, so you can reference their content."
+                )
+            else:
+                st.caption("Run the scan (sidebar → 🎬 Check saved leads) to collect links to their videos.")
 
 
 # ============================================================
@@ -937,32 +1351,54 @@ with tab_needs:
     if df is None or df.empty:
         _empty_state("No leads yet", "Run a search above, or open your saved leads from the sidebar.")
     else:
-        needs_df = _needs_view(df)
-        if needs_df.empty:
-            st.success("All businesses in this search have a real website!")
+        # Filter by lead type (groups listed in sales-priority order) + online presence
+        f1, f2 = st.columns([3, 2])
+        status_filter = f1.multiselect(
+            "Show lead types",
+            options=list(OPPORTUNITY_GROUPS),
+            default=list(OPPORTUNITY_GROUPS),
+            key="opp_status_filter",
+            help="Pick which kinds of leads to show. Priority order: 🎬 makes videos + no website → "
+                 "🔴 terrible/poor website → 🚫 no website → 📱 public socials → 🌐 working website. "
+                 "The list always sorts by this priority first, then Lead Score.",
+        )
+        f2.selectbox(
+            "Online presence",
+            options=list(ONLINE_FILTERS),
+            key="online_filter",
+            help="Anything / only leads with a website, socials or confirmed video content / "
+                 "only leads confirmed to post video for their business (🎬) / leads with no "
+                 "online footprint at all. Combines with 'Show lead types'.",
+        )
+        filtered_df = _leads_view()
+
+        if filtered_df.empty:
+            st.info("No leads match the selected filter.")
         else:
             preview_max = 250
-            shown = needs_df.head(preview_max)
+            shown = filtered_df.head(preview_max)
             pids = shown["place_id"].tolist()
             callable_now = int(shown["Call Window"].str.startswith("✅").sum())
             n_wa = int((shown["WhatsApp Link"] != "").sum())
             n_mail = int((shown["Manual Email"].str.strip() != "").sum())
 
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("🎯 Leads to contact", f"{len(needs_df):,}")
+            k1.metric("🎯 Leads to contact", f"{len(filtered_df):,}")
             k2.metric("📞 Good time to call now", f"{callable_now:,}",
                       help="Business hours right now where the lead is (✅ in the Local time column).")
             k3.metric("💬 Can use WhatsApp", f"{n_wa:,}", help="Mobile / international numbers only — landlines can't use WhatsApp.")
             k4.metric("✉️ With an email", f"{n_mail:,}")
-            if len(needs_df) > preview_max:
-                st.info(f"Showing the best {preview_max} of {len(needs_df):,} leads (sorted by score). "
-                        "All of them are in the CSV on the Downloads tab.")
+            if len(filtered_df) > preview_max:
+                st.info(f"Showing the best {preview_max} of {len(filtered_df):,} leads (sorted by priority — "
+                        "video-makers without a website first, then terrible websites). All of them are in the CSV on the Downloads tab.")
 
             st.markdown("#### 1 · Pick a lead")
-            st.caption("Click a row. Sorted by lead score · ✅ good time to call · 💤 outside business hours there.")
+            st.caption("Click a row. Sorted by sales priority: 🎬 makes videos + no website → 🔴 terrible website → "
+                       "🚫 no website → 📱 socials → 🌐 working site.")
             table = pd.DataFrame({
                 "Name": shown["Name"], "Town": shown["Town"], "Score": shown["Lead Score"],
                 "Website": shown["Website Status"].str.title(),
+                "🎬 Videos": shown["Video Content"] if "Video Content" in shown.columns else "",
                 "Phone": shown["Phone"], "Type": shown["Phone Type"],
                 "Local time": (shown["Local Time"] + " " + shown["Call Window"].str[:1]).str.strip(),
                 "Status": shown["Contacted"],
@@ -989,9 +1425,13 @@ with tab_needs:
             with st.container(border=True, key="leadcard"):
                 hl, hr_ = st.columns([5, 2], vertical_alignment="center")
                 badges = [
-                    _badge(row["Website Status"].title(), "red" if row["Website Status"] == "NO WEBSITE" else "amber"),
+                    _badge(row["Website Status"].title(), STATUS_TONES.get(row["Website Status"], "")),
                     _badge(f"Score {row['Lead Score']}", "green" if row["Lead Score"] >= 70 else ""),
                 ]
+                if str(row.get("Video Content", "")).strip().upper() == "YES":
+                    badges.append(_badge("🎬 Makes videos", "green"))
+                elif str(row.get("Video Content", "")).strip().upper() == "UNKNOWN":
+                    badges.append(_badge("🎬 Videos unknown", "gray"))
                 if row["Phone Type"]:
                     badges.append(_badge(row["Phone Type"].title(), "gray"))
                 if row["Local Time"]:
@@ -1010,16 +1450,32 @@ with tab_needs:
                     st.caption(f"Lead {pos + 1} of {len(pids)}")
 
                 phone_digits = re.sub(r"[^\d+]", "", row["Phone"])
-                actions = [
+                # One button per social network they have (📘 Facebook, 📸 Instagram, 🎵 TikTok…)
+                socials = order_socials(row.get("Socials", "")) or split_socials(row.get("Social Link", ""))
+                actions = [(social_label(s), s) for s in socials[:4]]
+                # Their actual business video, first — that's what you're pitching on
+                video_link = str(row.get("Video Link", "") or "")
+                if video_link and video_link not in socials:
+                    actions.insert(0, ("▶ Their video", video_link))
+                actions += [
+                    ("🌐 Website", row.get("Website", "")),
                     ("💬 WhatsApp", row["WhatsApp Link"]),
                     ("📞 Call", f"tel:{phone_digits}" if phone_digits else ""),
                     ("✉️ Email", row["Mail Link"]),
                     ("📍 Map", row["Google Maps"]),
                     ("🔍 Google", row["Google Search"]),
-                    ("📘 Facebook", row["Facebook Search"]),
                 ]
-                actions = [a for a in actions if a[1]]
-                for col, (label, url) in zip(st.columns(len(actions)), actions):
+                # Generic Facebook search only when we don't already have their real page
+                if not any(social_label(s) == "📘 Facebook" for s in socials):
+                    actions.append(("📘 Facebook", row["Facebook Search"]))
+                # No duplicate buttons (a SOCIAL ONLY lead's "Website" IS its social page)
+                seen_urls: set[str] = set()
+                uniq_actions = []
+                for _label, _url in actions:
+                    if _url and _url not in seen_urls:
+                        seen_urls.add(_url)
+                        uniq_actions.append((_label, _url))
+                for col, (label, url) in zip(st.columns(len(uniq_actions)), uniq_actions):
                     col.link_button(label, url, width="stretch")
                 st.caption(
                     f"Best channel: **{row['Best Channel']}**. Open the Map and Google links first to confirm "
@@ -1064,10 +1520,10 @@ with tab_needs:
                         "📥 Download this mockup (.html)", mock_html.encode("utf-8"),
                         file_name=f"{slug(row['Name'])}.html", mime="text/html", width="stretch",
                     )
-                    zip_sig = (len(needs_df), needs_df["place_id"].iloc[0], needs_df["place_id"].iloc[-1], sender, contact)
-                    if mk2.button(f"📦 Prepare ZIP of all {len(needs_df):,} mockups", width="stretch"):
+                    zip_sig = (len(filtered_df), filtered_df["place_id"].iloc[0], filtered_df["place_id"].iloc[-1], sender, contact)
+                    if mk2.button(f"📦 Prepare ZIP of all {len(filtered_df):,} mockups", width="stretch"):
                         with st.spinner("Building mockups…"):
-                            st.session_state["mock_zip"] = (zip_sig, build_zip(needs_df, sender, contact))
+                            st.session_state["mock_zip"] = (zip_sig, build_zip(filtered_df, sender, contact))
                     ready = st.session_state.get("mock_zip")
                     if ready and ready[0] == zip_sig:
                         mk2.download_button(
@@ -1152,10 +1608,24 @@ with tab_needs:
                     st.code(chatgpt_prompt(row.to_dict(), outreach_settings), language=None, wrap_lines=True)
 
                 with t_info:
+                    # For SOCIAL ONLY leads the "Website" IS the social page — shown once, below
+                    _site = str(row.get("Website", "") or "")
+                    if row.get("Website Status") == "SOCIAL ONLY":
+                        _site = ""
                     facts = [
                         ("Address", row["Address"]), ("Town", row["Town"]), ("Phone", row["Phone"]),
-                        ("International phone", row["Intl Phone"]), ("Website status", row["Website Status"].title()),
-                        ("Social page", row["Social Link"]), ("Director", row["Director Name"]),
+                        ("International phone", row["Intl Phone"]), ("Website", _site),
+                        ("Website status", row["Website Status"].title()),
+                        ("Quality score", f"{int(row['Quality Score'])}/100 (lower = worse)"
+                         if pd.notna(row.get("Quality Score")) else ""),
+                        ("Socials", " · ".join(order_socials(row.get("Socials", ""))
+                                               or split_socials(row.get("Social Link", "")))),
+                        ("Makes videos", {
+                            "YES": "🎬 Yes — " + str(row.get("Video Sources", "") or "seen their videos"),
+                            "NO": "🚫 No videos found",
+                            "UNKNOWN": "❓ Unknown — " + str(row.get("Video Sources", "") or "couldn't verify"),
+                        }.get(str(row.get("Video Content", "")).strip().upper(), "")),
+                        ("Director", row["Director Name"]),
                         ("Company number", str(row.get("Company Number", "") or "")),
                         ("Incorporated", str(row.get("Incorporated", "") or "")),
                         ("Source", row.get("Source", "")), ("First seen", str(row.get("First Seen", "") or "")),
@@ -1167,6 +1637,16 @@ with tab_needs:
                         for k, v in facts if str(v or "").strip() and str(v) != "nan"
                     )
                     st.markdown(f'<div class="ds-kv">{cells}</div>', unsafe_allow_html=True)
+
+                    # Their actual videos, as clickable links (up to 6)
+                    _vid_urls = [u.strip() for u in str(row.get("Video Links", "") or "").splitlines() if u.strip()]
+                    if _vid_urls:
+                        st.markdown("**🎬 Their business videos**")
+                        _vcols = st.columns(min(len(_vid_urls), 3))
+                        for _i, (_c, _u) in enumerate(zip(_vcols, _vid_urls[:3]), start=1):
+                            _c.link_button(f"▶ Video {_i}", _u, width="stretch")
+                        if len(_vid_urls) > 3:
+                            st.caption(f"{len(_vid_urls)} videos found — first 3 shown here, the rest are in the CSV.")
 
             with st.expander(f"📝 Edit statuses & emails in a table ({len(shown):,} leads)"):
                 edit_cols = [
@@ -1257,6 +1737,7 @@ with tab_follow:
                 f"<td>{_link(r['Follow-up WhatsApp Link'], 'WhatsApp')}</td>"
                 f"<td>{_link(r['Follow-up Mail Link'], 'Email ✉️', False)}</td>"
                 f"<td>{_link(r['Google Maps'], '📍 Map')}</td>"
+                f"<td>{_link(r.get('Website', '') or r.get('Social Link', ''), '🌐 Site')}</td>"
                 f"<td>{_link(r['Facebook Search'], 'Facebook 🔍')}</td>"
                 "</tr>"
             )
@@ -1264,7 +1745,7 @@ with tab_follow:
             LEADS_TABLE_CSS
             + '<table class="leads-table"><thead><tr><th>Name</th><th>Town</th><th>Status</th>'
               "<th>Contacted</th><th>Phone</th><th>Type</th><th>Local time</th><th>WhatsApp</th><th>Email</th>"
-              "<th>Map</th><th>Facebook</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+              "<th>Map</th><th>Site</th><th>Facebook</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
         )
 
         pick_fu = st.selectbox(
@@ -1369,8 +1850,10 @@ with tab_downloads:
 
         csv_cols = [
             "Name", "Address", "Town", "Phone", "Phone Type", "Best Channel", "Intl Phone",
-            "Website Status", "Social Link", "Rating", "Reviews", "Lead Score", "Director Name",
-            "Company Number", "Incorporated", "Manual Email", "Email Subject", "Email Body",
+            "Website", "Website Status", "Social Link", "Socials",
+            "Video Content", "Video Link", "Video Links", "Video Sources",
+            "Quality Score", "Rating", "Reviews", "Priority", "Lead Score",
+            "Director Name", "Company Number", "Incorporated", "Manual Email", "Email Subject", "Email Body",
             "WhatsApp Message", "WhatsApp Link", "Google Maps", "Google Search", "Facebook Search",
             "LinkedIn Search", "Contacted", "Source", "First Seen",
         ]
@@ -1381,7 +1864,10 @@ with tab_downloads:
             mime="text/csv",
             width="stretch",
         )
-        st.caption(f"{len(needs_dl):,} rows · No Website / Social Only · sorted by Lead Score")
+        st.caption(
+            f"{len(needs_dl):,} rows · Terrible/Poor website, No Website, Social Only · "
+            "sorted by priority (1 = makes videos with no website first, then terrible website)"
+        )
         if needs_dl.empty:
             st.info("No 'Needs Website' leads found matching filter.")
 
