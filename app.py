@@ -39,8 +39,9 @@ from overture_api import MAX_OVERTURE_RESULTS, OVERTURE_CATEGORIES, search_overt
 from places_api import CATEGORY_TYPES, MAX_PLACES_RESULTS, search_places
 from ai_generator import AIError, PROVIDERS as AI_PROVIDERS, STYLES as AI_STYLES, generate_site, website_prompt
 from website_classifier import (
-    best_social, classify_website, ensure_scheme, order_socials, reclassify_as_poor,
-    social_label, split_socials,
+    SOCIAL_PLATFORMS, best_social, classify_website, clean_url, ensure_scheme,
+    is_social_url, order_socials, reclassify_as_poor, social_label,
+    socials_by_platform, split_socials,
 )
 from pagespeed_api import analyze_website, calculate_quality_score
 from lead_scanner import scan_leads, scan_saved_leads
@@ -1395,10 +1396,34 @@ with tab_needs:
             st.markdown("#### 1 · Pick a lead")
             st.caption("Click a row. Sorted by sales priority: 🎬 makes videos + no website → 🔴 terrible website → "
                        "🚫 no website → 📱 socials → 🌐 working site.")
+            # Website link + one short link per social network — for EVERY row.
+            # Blank cell = we have no link (never invent one); "No Website" and
+            # friends stay visible in the Website Status text column.
+            _site_links: list[str] = []
+            _plat_rows: list[dict[str, str]] = []
+            for _, _r in shown.iterrows():
+                _w = clean_url(_r.get("Website", ""))
+                _is_social = bool(_w) and is_social_url(_w)
+                _site_links.append("" if _is_social else _w)
+                _urls = split_socials(_r.get("Socials", "")) + split_socials(_r.get("Social Link", ""))
+                if _is_social:
+                    _urls.append(_w)  # SOCIAL ONLY lead: their "website" IS a social page
+                _plat_rows.append(socials_by_platform(_urls))
+            _codes = [code for code, _ in SOCIAL_PLATFORMS]
+            _social_help = {
+                "FB": "Facebook page for this business.",
+                "IG": "Instagram profile for this business.",
+                "TT": "TikTok profile for this business.",
+                "LI": "LinkedIn page for this business.",
+                "X": "X / Twitter profile for this business.",
+                "YT": "YouTube channel for this business.",
+            }
             table = pd.DataFrame({
                 "Name": shown["Name"], "Town": shown["Town"], "Score": shown["Lead Score"],
-                "Website": shown["Website Status"].str.title(),
-                "🎬 Videos": shown["Video Content"] if "Video Content" in shown.columns else "",
+                "Website": _site_links,
+                "Website Status": shown["Website Status"].str.title(),
+                "🎬 Videos": shown["Video Content"] if "Video Content" in shown.columns else [""] * len(shown),
+                **{code: [p.get(code, "") for p in _plat_rows] for code in _codes},
                 "Phone": shown["Phone"], "Type": shown["Phone Type"],
                 "Local time": (shown["Local Time"] + " " + shown["Call Window"].str[:1]).str.strip(),
                 "Status": shown["Contacted"],
@@ -1409,6 +1434,20 @@ with tab_needs:
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
                     "Name": st.column_config.TextColumn("Name", width="medium"),
+                    "Website": st.column_config.LinkColumn(
+                        "🌐 Website", width="large",
+                        help="Their real website — opens in a new tab. Blank when they don't have one.",
+                    ),
+                    "Website Status": st.column_config.TextColumn(
+                        "Website Status", width="small",
+                        help="No Website / Social Only / Poor / Terrible / Has Website.",
+                    ),
+                    **{
+                        code: st.column_config.LinkColumn(
+                            code, display_text=code, width="small", help=_social_help[code],
+                        )
+                        for code in _codes
+                    },
                 },
             )
             picked = list(sel.selection.rows) if sel is not None and sel.selection else []
@@ -1452,13 +1491,18 @@ with tab_needs:
                 phone_digits = re.sub(r"[^\d+]", "", row["Phone"])
                 # One button per social network they have (📘 Facebook, 📸 Instagram, 🎵 TikTok…)
                 socials = order_socials(row.get("Socials", "")) or split_socials(row.get("Social Link", ""))
+                _w = clean_url(row.get("Website", ""))
+                if _w and is_social_url(_w):
+                    # SOCIAL ONLY lead: their "website" IS the social page — label it properly
+                    socials = order_socials(socials + [_w])
+                socials = [u for u in (clean_url(s) for s in socials) if u]
                 actions = [(social_label(s), s) for s in socials[:4]]
                 # Their actual business video, first — that's what you're pitching on
                 video_link = str(row.get("Video Link", "") or "")
                 if video_link and video_link not in socials:
                     actions.insert(0, ("▶ Their video", video_link))
                 actions += [
-                    ("🌐 Website", row.get("Website", "")),
+                    ("🌐 Website", _w if (_w and not is_social_url(_w)) else ""),
                     ("💬 WhatsApp", row["WhatsApp Link"]),
                     ("📞 Call", f"tel:{phone_digits}" if phone_digits else ""),
                     ("✉️ Email", row["Mail Link"]),
@@ -1608,18 +1652,26 @@ with tab_needs:
                     st.code(chatgpt_prompt(row.to_dict(), outreach_settings), language=None, wrap_lines=True)
 
                 with t_info:
-                    # For SOCIAL ONLY leads the "Website" IS the social page — shown once, below
-                    _site = str(row.get("Website", "") or "")
-                    if row.get("Website Status") == "SOCIAL ONLY":
-                        _site = ""
+                    # Same links as the table & lead card: real website + one anchor
+                    # per social profile (blank cell = no link found, never invented).
+                    _info_w = clean_url(row.get("Website", ""))
+                    _info_socials = order_socials(row.get("Socials", "")) or split_socials(row.get("Social Link", ""))
+                    if _info_w and is_social_url(_info_w):
+                        _info_socials = order_socials(_info_socials + [_info_w])
+                    _info_socials = [u for u in (clean_url(s) for s in _info_socials) if u]
+                    _site = "" if (not _info_w or is_social_url(_info_w)) else _info_w
+
+                    def _anchor(u: str) -> str:
+                        return (f'<a href="{html.escape(u, quote=True)}" target="_blank" '
+                                f'rel="noopener noreferrer">{html.escape(u)}</a>')
+
                     facts = [
                         ("Address", row["Address"]), ("Town", row["Town"]), ("Phone", row["Phone"]),
                         ("International phone", row["Intl Phone"]), ("Website", _site),
                         ("Website status", row["Website Status"].title()),
                         ("Quality score", f"{int(row['Quality Score'])}/100 (lower = worse)"
                          if pd.notna(row.get("Quality Score")) else ""),
-                        ("Socials", " · ".join(order_socials(row.get("Socials", ""))
-                                               or split_socials(row.get("Social Link", "")))),
+                        ("Socials", " · ".join(_info_socials)),
                         ("Makes videos", {
                             "YES": "🎬 Yes — " + str(row.get("Video Sources", "") or "seen their videos"),
                             "NO": "🚫 No videos found",
@@ -1632,10 +1684,17 @@ with tab_needs:
                     ]
                     if pd.notna(row.get("Rating")):
                         facts.insert(5, ("Rating", f"{row['Rating']:.1f} ({int(row['Reviews']) if pd.notna(row.get('Reviews')) else 0} reviews)"))
-                    cells = "".join(
-                        f"<div>{html.escape(k)}</div><div>{html.escape(str(v))}</div>"
-                        for k, v in facts if str(v or "").strip() and str(v) != "nan"
-                    )
+                    cells = ""
+                    for _k, _v in facts:
+                        if not (str(_v or "").strip() and str(_v) != "nan"):
+                            continue
+                        if _k == "Website":
+                            _val = _anchor(_v)
+                        elif _k == "Socials":
+                            _val = " · ".join(_anchor(u) for u in _info_socials)
+                        else:
+                            _val = html.escape(str(_v))
+                        cells += f"<div>{html.escape(_k)}</div><div>{_val}</div>"
                     st.markdown(f'<div class="ds-kv">{cells}</div>', unsafe_allow_html=True)
 
                     # Their actual videos, as clickable links (up to 6)

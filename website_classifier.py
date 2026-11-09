@@ -15,7 +15,7 @@ Matching is done on the URL's hostname (exact or subdomain), not substrings.
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 # PageSpeed quality thresholds: below TERRIBLE_QUALITY → "TERRIBLE WEBSITE",
 # below POOR_QUALITY → "POOR WEBSITE" (both are "bad website" leads).
@@ -186,6 +186,101 @@ def best_social(urls) -> str:
         return ""
     social = next((c for c in ordered if is_social_url(c)), "")
     return social or ordered[0]
+
+
+# ---------------------------------------------------------------------------
+# Link normalisation for the UI (lead table / lead card / details panel)
+# ---------------------------------------------------------------------------
+
+# Query params that only track the click — stripped before a URL is shown.
+_TRACKING_PARAMS = frozenset(
+    {
+        "fbclid", "gclid", "dclid", "msclkid", "igshid", "mc_cid", "mc_eid",
+        "_hsenc", "_hsmi", "yclid", "twclid", "ttclid", "vero_id", "wickedid",
+        "ref_src", "ref_url", "mibextid", "gclsrc", "srsltid", "igshid_sg",
+    }
+)
+_TRACKING_PREFIXES = ("utm_",)
+
+# Values that mean "we have nothing" rather than a URL.
+_JUNK_VALUES = frozenset(
+    {"-", "--", "n/a", "na", "none", "null", "nil", "no website", "no site",
+     "unknown", "tbc", "todo", "www", "no", "false"}
+)
+
+# Non-web schemes we never turn into a link.
+_BAD_SCHEMES = ("mailto:", "tel:", "javascript:", "data:", "ftp:", "file:")
+
+
+def clean_url(url) -> str:
+    """
+    Normalise a URL for display: add https:// when the scheme is missing,
+    strip tracking parameters (utm_*, fbclid, gclid, …), and return '' for
+    junk / empty / non-web values. Never invents a URL — a value that isn't
+    clearly a web address comes back empty so the cell can stay blank.
+    """
+    if not isinstance(url, str):
+        return ""
+    u = url.strip().strip("<>").strip()
+    if not u or any(ch.isspace() for ch in u) or u.lower() in _JUNK_VALUES:
+        return ""
+    if u.lower().startswith(_BAD_SCHEMES):
+        return ""
+    u = ensure_scheme(u)
+    try:
+        parts = urlparse(u)
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or "." not in (parts.hostname or ""):
+        return ""
+    # Drop tracking params (social networks also use plain ref= for tracking).
+    if parts.query:
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        keep = [
+            (k, v) for k, v in pairs
+            if k.lower() not in _TRACKING_PARAMS
+            and not k.lower().startswith(_TRACKING_PREFIXES)
+            and not (k.lower() == "ref" and is_social_url(u))
+        ]
+        query = urlencode(keep) if len(keep) != len(pairs) else parts.query
+    else:
+        query = ""
+    return urlunparse((parts.scheme, parts.netloc, parts.path, parts.params, query, parts.fragment))
+
+
+# Short labels for the per-platform link columns in the lead table:
+# ("FB", domains that count as Facebook), …
+SOCIAL_PLATFORMS = (
+    ("FB", ("facebook.com", "fb.com", "fb.me")),
+    ("IG", ("instagram.com",)),
+    ("TT", ("tiktok.com",)),
+    ("LI", ("linkedin.com",)),
+    ("X", ("twitter.com", "x.com")),
+    ("YT", ("youtube.com",)),
+)
+
+
+def socials_by_platform(urls) -> dict[str, str]:
+    """
+    {'FB': 'https://facebook.com/x', 'TT': 'https://tiktok.com/@y', …}
+    — one cleaned URL per network (first match wins, preference order).
+    Networks the lead doesn't have are simply absent — never invented.
+    """
+    out: dict[str, str] = {}
+    for u in order_socials(urls):
+        u = clean_url(u)
+        if not u:
+            continue
+        host = _hostname(u)
+        if not host:
+            continue
+        parts = host.split(".")
+        for code, domains in SOCIAL_PLATFORMS:
+            if code in out:
+                continue
+            if any(".".join(parts[i:]) in domains for i in range(len(parts) - 1)):
+                out[code] = u
+    return out
 
 
 def reclassify_as_poor(classification: str, quality_score: int | None) -> str:
