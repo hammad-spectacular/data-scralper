@@ -1,0 +1,15 @@
+{
+  "name": "Eds Hair",
+  "short_name": "Eds Hair",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#8c2f39",
+  "icons": [
+    {
+      "src": "https://edshair.co.uk/cdn/shop/files/Eds_2020_Logo_32x32.jpg",
+      "sizes": "32x32",
+      "type": "image/jpeg"
+    }
+  ]
+}

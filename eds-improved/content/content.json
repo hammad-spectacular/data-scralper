@@ -1,0 +1,531 @@
+{
+  "services": {
+    "Brazilian Blow Dry": [
+      {
+        "name": "To Chin",
+        "apprentice": 100.0,
+        "graduate": 115.0,
+        "stylist": 135.0,
+        "creative_director": 160.0
+      },
+      {
+        "name": "To Shoulder",
+        "apprentice": 125.0,
+        "graduate": 140.0,
+        "stylist": 160.0,
+        "creative_director": 185.0
+      },
+      {
+        "name": "To Armpit-Pit",
+        "apprentice": 150.0,
+        "graduate": 165.0,
+        "stylist": 190.0,
+        "creative_director": 215.0
+      },
+      {
+        "name": "To Mid-Back",
+        "apprentice": null,
+        "graduate": 190.0,
+        "stylist": 225.0,
+        "creative_director": 265.0
+      },
+      {
+        "name": "To Waist",
+        "apprentice": null,
+        "graduate": 235.0,
+        "stylist": 280.0,
+        "creative_director": 325.0
+      }
+    ],
+    "Hair Botox Treatment": [
+      {
+        "name": "Short",
+        "apprentice": 85.0,
+        "graduate": 100.0,
+        "stylist": 115.0,
+        "creative_director": 138.5
+      },
+      {
+        "name": "Mid-Length",
+        "apprentice": null,
+        "graduate": 105.0,
+        "stylist": 122.5,
+        "creative_director": 145.0
+      },
+      {
+        "name": "Long / Thick",
+        "apprentice": null,
+        "graduate": 112.5,
+        "stylist": 130.0,
+        "creative_director": 155.0
+      }
+    ],
+    "Cutting": [
+      {
+        "name": "Short",
+        "group": "Cut & Blow Dry",
+        "apprentice": null,
+        "graduate": 57.5,
+        "stylist": 67.5,
+        "creative_director": 86.0
+      },
+      {
+        "name": "Mid-Length",
+        "group": "Cut & Blow Dry",
+        "apprentice": 40.0,
+        "graduate": 62.5,
+        "stylist": 75.0,
+        "creative_director": 92.5
+      },
+      {
+        "name": "Long / Thick",
+        "group": "Cut & Blow Dry",
+        "apprentice": 47.5,
+        "graduate": 70.0,
+        "stylist": 82.5,
+        "creative_director": 102.5
+      },
+      {
+        "name": "Curly & Textured Experience",
+        "group": "Cut & Blow Dry",
+        "apprentice": null,
+        "graduate": null,
+        "stylist": 95.0,
+        "creative_director": 120.0
+      },
+      {
+        "name": "Men’s Cut & Restyle",
+        "group": "Cut & Blow Dry",
+        "apprentice": null,
+        "graduate": null,
+        "stylist": null,
+        "creative_director": 40.0
+      }
+    ],
+    "Styling": [
+      {
+        "name": "Short",
+        "group": "Blow Dry",
+        "apprentice": 25.0,
+        "graduate": 35.0,
+        "stylist": 40.0,
+        "creative_director": 48.5
+      },
+      {
+        "name": "Mid-Length",
+        "group": "Blow Dry",
+        "apprentice": 30.0,
+        "graduate": 40.0,
+        "stylist": 47.5,
+        "creative_director": 55.0
+      },
+      {
+        "name": "Long / Thick",
+        "group": "Blow Dry",
+        "apprentice": 37.5,
+        "graduate": 47.5,
+        "stylist": 55.0,
+        "creative_director": 65.0
+      },
+      {
+        "name": "Wedding Hair / Hair-Up",
+        "group": "Blow Dry",
+        "apprentice": null,
+        "graduate": 55.0,
+        "stylist": 75.0,
+        "creative_director": 100.0
+      }
+    ],
+    "Children (under 12)": [
+      {
+        "name": "Boy",
+        "apprentice": null,
+        "graduate": null,
+        "stylist": 25.0,
+        "creative_director": 30.0
+      },
+      {
+        "name": "Girl",
+        "apprentice": null,
+        "graduate": 20.0,
+        "stylist": 25.0,
+        "creative_director": 30.0
+      },
+      {
+        "name": "Girl with Wash & Blow Dry",
+        "apprentice": null,
+        "graduate": 45.0,
+        "stylist": 50.0,
+        "creative_director": 60.0
+      }
+    ],
+    "Colour": [
+      {
+        "name": "Roots (up to 3cm)",
+        "apprentice": 30.0,
+        "graduate": 45.0,
+        "stylist": 50.0,
+        "creative_director": 55.0
+      },
+      {
+        "name": "Full Head Colour (permanent)",
+        "apprentice": 45.0,
+        "graduate": 55.0,
+        "stylist": 65.0,
+        "creative_director": 75.0
+      },
+      {
+        "name": "Full Head Colour (demi-permanent)",
+        "apprentice": 30.0,
+        "graduate": 40.0,
+        "stylist": 50.0,
+        "creative_director": 60.0
+      },
+      {
+        "name": "Gloss & Tone",
+        "apprentice": 25.0,
+        "graduate": 35.0,
+        "stylist": 45.0,
+        "creative_director": 55.0
+      },
+      {
+        "name": "Toner (with highlights)",
+        "apprentice": 25.0,
+        "graduate": 25.0,
+        "stylist": 30.0,
+        "creative_director": 35.0
+      },
+      {
+        "name": "Poly Chromatic (add-on)",
+        "apprentice": null,
+        "graduate": 25.0,
+        "stylist": 25.0,
+        "creative_director": 25.0
+      }
+    ],
+    "Highlights & Lowlights": [
+      {
+        "name": "T Section",
+        "apprentice": null,
+        "graduate": 80.0,
+        "stylist": 90.0,
+        "creative_director": 105.0
+      },
+      {
+        "name": "½ Head Highlights / Lowlights",
+        "apprentice": null,
+        "graduate": 85.0,
+        "stylist": 100.0,
+        "creative_director": 120.0
+      },
+      {
+        "name": "¾ Head Highlights / Lowlights",
+        "apprentice": null,
+        "graduate": 95.0,
+        "stylist": 110.0,
+        "creative_director": 130.0
+      },
+      {
+        "name": "Full Head Highlights / Lowlights",
+        "apprentice": null,
+        "graduate": 105.0,
+        "stylist": 125.0,
+        "creative_director": 155.0
+      },
+      {
+        "name": "Contour",
+        "apprentice": null,
+        "graduate": 45.0,
+        "stylist": 55.0,
+        "creative_director": 70.0
+      },
+      {
+        "name": "Cap / Spatula",
+        "apprentice": 70.0,
+        "graduate": 80.0,
+        "stylist": 95.0,
+        "creative_director": 110.0
+      }
+    ],
+    "Balayage Highlights": [
+      {
+        "name": "½ Head Balayage",
+        "apprentice": null,
+        "graduate": 120.0,
+        "stylist": 140.0,
+        "creative_director": 170.0
+      },
+      {
+        "name": "Full Head Balayage",
+        "apprentice": null,
+        "graduate": 135.0,
+        "stylist": 165.0,
+        "creative_director": 200.0
+      },
+      {
+        "name": "Balayage Maintenance (6-12 week refresh – existing clients)",
+        "apprentice": null,
+        "graduate": 90.0,
+        "stylist": 105.0,
+        "creative_director": 120.0
+      }
+    ],
+    "Colour Removal": [
+      {
+        "name": "Roots (up to 3cm)",
+        "apprentice": null,
+        "graduate": 80.0,
+        "stylist": 90.0,
+        "creative_director": 105.0
+      },
+      {
+        "name": "Full Head (from)",
+        "apprentice": null,
+        "graduate": 90.0,
+        "stylist": 100.0,
+        "creative_director": 120.0
+      }
+    ],
+    "Creative Colour": [
+      {
+        "name": "2-Tone Colour Melt",
+        "apprentice": null,
+        "graduate": 90.0,
+        "stylist": 105.0,
+        "creative_director": 125.0
+      },
+      {
+        "name": "3-Tone Colour Melt",
+        "apprentice": null,
+        "graduate": 110.0,
+        "stylist": 130.0,
+        "creative_director": 165.0
+      },
+      {
+        "name": "Essential Looks",
+        "apprentice": null,
+        "graduate": null,
+        "stylist": 175.0,
+        "creative_director": 275.0
+      }
+    ],
+    "Perms & Relaxers": [
+      {
+        "name": "Perm (includes K18 & diffuse)",
+        "apprentice": null,
+        "graduate": 100.0,
+        "stylist": 120.0,
+        "creative_director": 145.0
+      },
+      {
+        "name": "Relaxer (from, includes K18)",
+        "apprentice": null,
+        "graduate": null,
+        "stylist": null,
+        "creative_director": 115.0
+      }
+    ],
+    "Tutorials": [
+      {
+        "name": "15 Minute",
+        "apprentice": null,
+        "graduate": 15.0,
+        "stylist": 20.0,
+        "creative_director": 20.0
+      },
+      {
+        "name": "30 Minute",
+        "apprentice": null,
+        "graduate": 30.0,
+        "stylist": 40.0,
+        "creative_director": 40.0
+      }
+    ]
+  },
+  "addons": [
+    {
+      "name": "FibrePlexTM",
+      "price": 20.0
+    },
+    {
+      "name": "Beauty Inside-Out Express",
+      "price": 25.0
+    },
+    {
+      "name": "Fibre Clinix (triple repair)",
+      "price": 25.0
+    },
+    {
+      "name": "Beauty Inside-Out Indulge",
+      "price": 25.0
+    },
+    {
+      "name": "BlondMe Deep Repair",
+      "price": 25.0
+    },
+    {
+      "name": "Scalp Detox",
+      "price": 10.0
+    },
+    {
+      "name": "Scalp Hydrate",
+      "price": 7.5
+    },
+    {
+      "name": "K18TM (molecular repair)",
+      "price": 30.0
+    }
+  ],
+  "hours": [
+    {
+      "day": "Monday",
+      "open": "8:30",
+      "close": "16:00"
+    },
+    {
+      "day": "Tuesday",
+      "open": "8:30",
+      "close": "17:30"
+    },
+    {
+      "day": "Wednesday",
+      "open": "8:30",
+      "close": "19:00"
+    },
+    {
+      "day": "Thursday",
+      "open": "8:30",
+      "close": "19:00"
+    },
+    {
+      "day": "Friday",
+      "open": "8:30",
+      "close": "17:30"
+    },
+    {
+      "day": "Saturday",
+      "open": "8:30",
+      "close": "16:00"
+    },
+    {
+      "day": "Sunday",
+      "open": null,
+      "close": null
+    }
+  ],
+  "nap": {
+    "name": "Eds Hair",
+    "street": "13 Bramhall Lane South",
+    "locality": "Bramhall",
+    "region": "Cheshire",
+    "postalCode": "SK7 1AL",
+    "country": "GB",
+    "countryName": "United Kingdom",
+    "phone": "0161 439 8058",
+    "phoneE164": "+441614398058",
+    "bookingUrl": "https://phorest.com/book/salons/edshair",
+    "appUrl": "https://bit.ly/EdsBramhall",
+    "giftUrl": "https://gift-cards.phorest.com/salons/edshair",
+    "facebook": "https://www.facebook.com/EdsHairBramhall/",
+    "instagram": "https://www.instagram.com/EdsHairBramhall/",
+    "priceListPdf": "https://cdn.shopify.com/s/files/1/2112/9277/files/Eds_Price_List_20260901.pdf?v=1787594039"
+  },
+  "tagline": "Luxe hair specialists in Bramhall, Stockport",
+  "slogan": "We exist to create happiness",
+  "credentials": [
+    "Schwarzkopf Professional Colour Master",
+    "Ambassadors for Glowwa",
+    "Schwarzkopf Collective Team"
+  ],
+  "specialities": [
+    "Balayage & lived-in colour",
+    "Brazilian blow dries",
+    "Keratin smoothing",
+    "Hair Botox treatments"
+  ],
+  "notices": [
+    "We are closed for Bank Holidays.",
+    "A skin test is required at least 48 hours before all colour and highlighting services and must be renewed annually.",
+    "Additional charges may apply for long or thick hair. A £20 surcharge applies to the formaldehyde-free Brazilian Blow Dry.",
+    "We kindly request a minimum of 48 hours' notice for appointment cancellations or amendments.",
+    "Customer consultations and Colour Passports are both charged at £15."
+  ],
+  "directions": "Located 5 minutes from the A34 between Cheadle and Wilmslow on the perimeter of the Bramhall Shopping Centre. There is a public car park behind us (near Sainsbury's) that is 20p per hour. Bramhall is also served well by Stagecoach bus 378 and by train from Manchester Piccadilly.",
+  "reviews": [
+    {
+      "quote": "Thank you Ed, thank you team for always looking after me and making me shine - when I go out (with my makeup on) I feel amazing! xxx",
+      "name": "Magali Gorré",
+      "service": ""
+    },
+    {
+      "quote": "This was my first Brazilian blow dry and I’m absolutely in love with it! It makes life so much easier and saves loads of time plus my hair looks fabulous and feels amazing ALL of the time! Will most definitely have it done again. The staff are so friendly and chatty, the time practically flies by! I highly recommend having this treatment done to anyone! Thanks Eds❤️",
+      "name": "Abigail",
+      "service": "Brazilian Blow Out"
+    },
+    {
+      "quote": "I was at Ed's a couple of weeks ago with the amazing Denise. 💕She didn't just fix my badly dyed hair, as that was all I was hoping for after putting up with brassy, awful hair for over a month... But she totally transformed it to something I absolutely loved! She also showed me new possibilities mixing blonde with pink tones, something I'd never had the guts to do until I walked into Ed's! I loved it so much I'm going back for more In a couple of weeks, thank you everyone at Ed's, and particularly my girl Denise.  If you are debating going to this salon then get your phone out, make an appointment and get your booty there! You won't regret it... They also have prosecco :-)",
+      "name": "Hannah Porter",
+      "service": "BlondeMe"
+    },
+    {
+      "quote": "If I tell you that I've been coming to Ed's for around six years now, originally at the Salford salon when it first opened, and I now travel an hour one way for a Brazillian Blow Dry, I think you will realise how amazingly talented he and his team are!! It's always a pleasure to come, and the results are unbelievably fantastic! I've gone from cork screw frizzy curls to a wash n go girl; hairdryer n straighteners are a distant memory! The atmosphere and team spirit in the salon instantly puts you at ease, everyone is so friendly but highly knowledgeable and professional. Ed's has been my secret indulgence for amazing sleek shiny and healthy hair for so long now, and it won't be changing any time soon; thanks guys, you all totally rock ;) x",
+      "name": "Sara Hudson",
+      "service": "Brazilian Blow Out"
+    },
+    {
+      "quote": "Holiday hair ..ready! ✔️💁🏼 Thanks to the team @edshairsalon ...especially @markosilva ....you sir, are a genius! 🙏 💯",
+      "name": "Lesley Hatton",
+      "service": "Blonde Holiday Hair"
+    }
+  ],
+  "productNames": [
+    "ABC Forever Fab Hair Christmas Gift Set (2025)",
+    "ABC Glow Mini Travel Kit",
+    "ABC Hydrate Mini Travel Kit",
+    "ABC Replenish Light Cream Mask",
+    "ABC Replenish Mini Travel Kit",
+    "ABC Replenish Rich Cream Mask",
+    "ABC Replenish Split End Remedy",
+    "ABC Vegan Dry Body Brush",
+    "Airy Texture Spray",
+    "Amplify Cleanser",
+    "Amplify Cleanser \\u0026 Conditioner Duo Pack",
+    "Amplify Foam Conditioner",
+    "Amplify Mega Pack",
+    "Amplify Mousse",
+    "Amplify Root-Lift Spray Conditioner",
+    "Appointment Deposit",
+    "Argan Oil Serum 90ml",
+    "Authentic Beauty Concept Amplify Christmas Pack (2026)",
+    "Authentic Beauty Concept Glow Christmas Pack (2026)",
+    "Authentic Beauty Concept Hair \\u0026 Senses Christmas Gift Set (2026)",
+    "Authentic Beauty Concept Hydrate Christmas Pack (2026)",
+    "Authentic Beauty Concept Jade Stone Massage Comb",
+    "Authentic Beauty Concept Replenish Christmas Pack (2026)",
+    "Authentic Beauty Concept Vegan Hair Brush",
+    "Bare Cleanser",
+    "BC Clean Balance Anti-Pollution Water (Tocopherol)",
+    "Beautifying Rich Oil",
+    "BlondMe Brightening Shampoo",
+    "BlondMe Deep Repair Mask",
+    "BlondMe Deep Repair Oil",
+    "BlondMe Nourish Christmas Gift Pack (2026)",
+    "BlondMe Nourishing Conditioner",
+    "BlondMe Nourishing Mask",
+    "BlondMe Nourishing Shampoo",
+    "BlondMe Purple (Cool) Christmas Gift Pack (2026)",
+    "BlondMe Purple Conditioner",
+    "BlondMe Purple Mask",
+    "BlondMe Purple Shampoo",
+    "BlondMe Purple Spray Conditioner",
+    "BlondMe Sealing Balm",
+    "Bonacure Scalp Soothing Shampoo",
+    "Chroma ID 6-46 Raw Cacao Bonding Color Mask",
+    "Chroma ID 6-88 Ruby Red Bonding Color Mask",
+    "Chroma ID 7-77 Bright Copper Bonding Color Mask",
+    "Chroma ID 8-19 Frosted Lavender Bonding Color Mask",
+    "Chroma ID 8-46 Glazed Caramel Bonding Color Mask",
+    "Chroma ID 9,5-1 Pearl Silver Bonding Color Mask",
+    "Chroma ID 9,5-19 Dusty Pink Bonding Color Mask"
+  ]
+}

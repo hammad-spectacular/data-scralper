@@ -1,0 +1,242 @@
+{
+  "hero": {
+    "widths": [
+      640,
+      840
+    ],
+    "files": [
+      "hero-640.webp",
+      "hero-840.webp"
+    ],
+    "ratio": 1.0
+  },
+  "hero-mobile": {
+    "widths": [
+      640,
+      840
+    ],
+    "files": [
+      "hero-mobile-640.webp",
+      "hero-mobile-840.webp"
+    ],
+    "ratio": 1.0
+  },
+  "blowout": {
+    "widths": [
+      640,
+      960
+    ],
+    "files": [
+      "blowout-640.webp",
+      "blowout-960.webp"
+    ],
+    "ratio": 2.6667
+  },
+  "beforeafter": {
+    "widths": [
+      630
+    ],
+    "files": [
+      "beforeafter-630.webp"
+    ],
+    "ratio": 1.0
+  },
+  "colour": {
+    "widths": [
+      640,
+      960
+    ],
+    "files": [
+      "colour-640.webp",
+      "colour-960.webp"
+    ],
+    "ratio": 2.6667
+  },
+  "colour2": {
+    "widths": [
+      640,
+      840
+    ],
+    "files": [
+      "colour2-640.webp",
+      "colour2-840.webp"
+    ],
+    "ratio": 1.0
+  },
+  "styling": {
+    "widths": [
+      640,
+      960
+    ],
+    "files": [
+      "styling-640.webp",
+      "styling-960.webp"
+    ],
+    "ratio": 2.6667
+  },
+  "cuts": {
+    "widths": [
+      640,
+      840
+    ],
+    "files": [
+      "cuts-640.webp",
+      "cuts-840.webp"
+    ],
+    "ratio": 1.0
+  },
+  "texture": {
+    "widths": [
+      480,
+      800
+    ],
+    "files": [
+      "texture-480.webp",
+      "texture-800.webp"
+    ],
+    "ratio": 1.8686
+  },
+  "gift": {
+    "widths": [
+      640,
+      960
+    ],
+    "files": [
+      "gift-640.webp",
+      "gift-960.webp"
+    ],
+    "ratio": 2.0791
+  },
+  "contact": {
+    "widths": [
+      640,
+      960
+    ],
+    "files": [
+      "contact-640.webp",
+      "contact-960.webp"
+    ],
+    "ratio": 2.6667
+  },
+  "portrait": {
+    "widths": [
+      320,
+      630
+    ],
+    "files": [
+      "portrait-320.webp",
+      "portrait-630.webp"
+    ],
+    "ratio": 1.0
+  },
+  "redhead": {
+    "widths": [
+      320,
+      630
+    ],
+    "files": [
+      "redhead-320.webp",
+      "redhead-630.webp"
+    ],
+    "ratio": 1.0
+  },
+  "blonde": {
+    "widths": [
+      320,
+      630
+    ],
+    "files": [
+      "blonde-320.webp",
+      "blonde-630.webp"
+    ],
+    "ratio": 1.0
+  },
+  "product-ghd-black": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-ghd-black-400.webp",
+      "product-ghd-black-600.webp"
+    ],
+    "ratio": 1.0
+  },
+  "product-ghd-white": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-ghd-white-400.webp",
+      "product-ghd-white-600.webp"
+    ],
+    "ratio": 1.0
+  },
+  "product-k18": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-k18-400.webp",
+      "product-k18-600.webp"
+    ],
+    "ratio": 1.0
+  },
+  "product-abc": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-abc-400.webp",
+      "product-abc-600.webp"
+    ],
+    "ratio": 1.0
+  },
+  "product-ghd-speed": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-ghd-speed-400.webp",
+      "product-ghd-speed-600.webp"
+    ],
+    "ratio": 2.0351
+  },
+  "product-ghd-speed2": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-ghd-speed2-400.webp",
+      "product-ghd-speed2-600.webp"
+    ],
+    "ratio": 2.0351
+  },
+  "product-ghd-743": {
+    "widths": [
+      400,
+      600
+    ],
+    "files": [
+      "product-ghd-743-400.webp",
+      "product-ghd-743-600.webp"
+    ],
+    "ratio": 2.0351
+  },
+  "logo": {
+    "widths": [
+      280,
+      532
+    ],
+    "files": [
+      "logo-280.webp",
+      "logo-532.webp"
+    ],
+    "ratio": 1.7733
+  }
+}

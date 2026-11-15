@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /cart
+Disallow: /checkouts/
+Disallow: /account
+
+Sitemap: https://edshair.co.uk/sitemap.xml

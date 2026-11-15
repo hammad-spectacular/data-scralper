@@ -16,3 +16,16 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Run outputs and logs - regenerable, and they embed your own contact details
+last_*
+*.log
+*.err
+
+# Lighthouse QA reports - regenerable, ~4MB of noise
+lh-*.report.json
+lh-*.report.html
+
+# Scraped third-party source material (edshair.co.uk HTML dumps).
+# Reference only - contains embedded storefront tokens. Regenerate locally.
+eds-improved/analysis/
