@@ -229,6 +229,12 @@ if __name__ == "__main__":
     # python lead_scanner.py   — batch-check leads.db without opening the app
     import sys
 
+    # Windows consoles default to cp1252 and blow up on the emoji in the progress text.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     def _print_progress(frac: float, text: str) -> None:
         sys.stdout.write(f"\r[{frac * 100:5.1f}%] {text}          ")
         sys.stdout.flush()
