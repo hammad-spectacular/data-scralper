@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS leads (
 """
 
 # Columns that are user edits or rebuilt on every run — never stored with the lead
-_NOT_STORED = ("Manual Email", "Contacted", "Seen Before", "First Seen", "Last Seen")
+_NOT_STORED = ("Manual Email", "Contacted", "Notes", "Seen Before", "First Seen", "Last Seen")
 
 
 def _connect() -> sqlite3.Connection:

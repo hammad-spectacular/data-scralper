@@ -1,7 +1,7 @@
 """
 cache_manager.py
 ----------------
-Persists per-lead user edits (Manual Email, Contacted status) to a local
+Persists per-lead user edits (Manual Email, Contacted status, Notes) to a local
 JSON file so they survive app restarts.
 
 Cache is keyed by `place_id` and only ever stores values the user actually
@@ -24,6 +24,7 @@ CACHE_FILE = Path(__file__).parent / "cache.json"
 EDITABLE_DEFAULTS: dict[str, Any] = {
     "Manual Email": "",
     "Contacted": "Not contacted",
+    "Notes": "",
 }
 
 
@@ -98,7 +99,7 @@ def apply_edits(
                 continue
             if value is None or (isinstance(value, float) and value != value):
                 value = EDITABLE_DEFAULTS[field]
-            value = str(value).strip() if field == "Manual Email" else value
+            value = str(value).strip() if field in ("Manual Email", "Notes") else value
             entry = cache.setdefault(pid, {})
             if entry.get(field) != value:
                 entry[field] = value

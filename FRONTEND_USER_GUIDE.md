@@ -306,6 +306,7 @@ Shows **ALL** businesses found in the search (not just those needing websites).
 - First Seen, Last Seen
 - Manual Email (editable)
 - Contacted (editable dropdown)
+- 📝 Notes (editable) — your own notes for that lead
 
 **Metrics at bottom:**
 - 🚫 No Website: Count
@@ -316,7 +317,20 @@ Shows **ALL** businesses found in the search (not just those needing websites).
 - See the full picture of the market
 - Edit contact status in bulk
 - Add manual emails
+- Write per-lead notes (last column of every table)
 - Export all results
+
+### 📝 Notes (every lead, every table)
+
+Every lead has its own **Notes** column — the **last column** of the All Results table, the
+leads table, the follow-ups table and the follow-up update table. Type straight into the cell
+(it saves on blur) to record what happened last time, the key points, and what to do next.
+
+There is also a bigger **📝 Notes for this lead** box in the lead card (tab 2 → *Contact them*),
+right under the status and email boxes, for longer notes.
+
+Notes are saved per lead in `cache.json`, so they stay with that lead across restarts, in every
+tab, and in the CSV export. They never touch the lead's other data.
 
 ---
 
@@ -333,6 +347,7 @@ Shows leads waiting for a reply.
 - Days Since Contacted
 - Manual Email
 - Contacted On date
+- 📝 Notes — what happened last time, key points, what to do next
 
 **Stats section:**
 - **Contacts per day (last 14 days)**: Bar chart

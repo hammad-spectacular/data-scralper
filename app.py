@@ -1160,6 +1160,7 @@ with tab_all:
             "Video Content", "Video Link", "Video Sources", "Social Link", "Socials", "Quality Score", "Rating", "Reviews",
             "Priority", "Lead Score",
             "Best Channel", "Google Maps", "Business Status", "Source", "First Seen", "Manual Email", "Contacted",
+            "Notes",
         ]
         display_cols = [c for c in display_cols if c in df.columns]
 
@@ -1207,6 +1208,11 @@ with tab_all:
                 "Lead Score": st.column_config.ProgressColumn("Lead Score", min_value=0, max_value=100, format="%d"),
                 "Manual Email": st.column_config.TextColumn("Manual Email", width="medium"),
                 "Contacted": st.column_config.SelectboxColumn("Contacted", options=CONTACTED_OPTIONS, width="medium"),
+                "Notes": st.column_config.TextColumn(
+                    "📝 Notes", width="large",
+                    help="Your own notes for this lead — what happened last time, the key points, "
+                         "what to say next. Saved to cache.json and kept for every view of this lead.",
+                ),
             },
             disabled=[c for c in display_cols if c not in EDITABLE_DEFAULTS],
             width="stretch",
@@ -1427,6 +1433,7 @@ with tab_needs:
                 "Phone": shown["Phone"], "Type": shown["Phone Type"],
                 "Local time": (shown["Local Time"] + " " + shown["Call Window"].str[:1]).str.strip(),
                 "Status": shown["Contacted"],
+                "📝 Notes": shown["Notes"] if "Notes" in shown.columns else "",
             })
             sel = st.dataframe(
                 table, hide_index=True, width="stretch", height=min(35 * len(table) + 40, 340),
@@ -1448,6 +1455,10 @@ with tab_needs:
                         )
                         for code in _codes
                     },
+                    "📝 Notes": st.column_config.TextColumn(
+                        "📝 Notes", width="large",
+                        help="Your own notes for this lead — what happened last time and what to do next.",
+                    ),
                 },
             )
             picked = list(sel.selection.rows) if sel is not None and sel.selection else []
@@ -1535,6 +1546,20 @@ with tab_needs:
                 s2.text_input("Email (add one if you find it — the Email button appears)", value=row["Manual Email"],
                               key=ekey, placeholder="name@business.com",
                               on_change=_set_lead_field, args=(pid, "Manual Email", ekey))
+
+                # 📝 Your own notes for THIS lead — what happened last time, key points, next step.
+                nkey = f"notes_{pid}_{ver}"
+                st.text_area(
+                    "📝 Notes for this lead",
+                    value=str(row.get("Notes", "") or ""),
+                    key=nkey,
+                    height=100,
+                    placeholder="e.g. Called 12 Nov — owner not available, ask for Dave. Their site is "
+                                "just a Facebook page. Follow up next week, mention video work.",
+                    help="Saved to cache.json — it stays with this lead in every table, tab and export.",
+                    on_change=_set_lead_field,
+                    args=(pid, "Notes", nkey),
+                )
 
                 sender, contact = outreach_settings["sender_name"], outreach_settings["sender_phone"]
                 t_msg, t_site, t_prompt, t_info = st.tabs(
@@ -1711,6 +1736,7 @@ with tab_needs:
                 edit_cols = [
                     "Name", "Town", "Website Status", "Lead Score",
                     "Phone", "Phone Type", "Best Channel", "Director Name", "Manual Email", "Contacted",
+                    "Notes",
                 ]
                 edit_cols = [c for c in edit_cols if c in shown.columns]
                 st.data_editor(
@@ -1726,6 +1752,10 @@ with tab_needs:
                         "Director Name": st.column_config.TextColumn("Director"),
                         "Manual Email": st.column_config.TextColumn("Manual Email", width="medium"),
                         "Contacted": st.column_config.SelectboxColumn("Contacted", options=CONTACTED_OPTIONS, width="medium"),
+                        "Notes": st.column_config.TextColumn(
+                            "📝 Notes", width="large",
+                            help="Your own notes for this lead — what happened last time and what to do next.",
+                        ),
                     },
                     disabled=[c for c in edit_cols if c not in EDITABLE_DEFAULTS],
                     width="stretch",
@@ -1798,13 +1828,15 @@ with tab_follow:
                 f"<td>{_link(r['Google Maps'], '📍 Map')}</td>"
                 f"<td>{_link(r.get('Website', '') or r.get('Social Link', ''), '🌐 Site')}</td>"
                 f"<td>{_link(r['Facebook Search'], 'Facebook 🔍')}</td>"
+                f"<td style='max-width:320px;white-space:pre-wrap'>{html.escape(str(r.get('Notes', '') or ''))}</td>"
                 "</tr>"
             )
         st.html(
             LEADS_TABLE_CSS
             + '<table class="leads-table"><thead><tr><th>Name</th><th>Town</th><th>Status</th>'
               "<th>Contacted</th><th>Phone</th><th>Type</th><th>Local time</th><th>WhatsApp</th><th>Email</th>"
-              "<th>Map</th><th>Site</th><th>Facebook</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+              "<th>Map</th><th>Site</th><th>Facebook</th><th>📝 Notes</th></tr></thead><tbody>"
+            + "".join(rows) + "</tbody></table>"
         )
 
         pick_fu = st.selectbox(
@@ -1814,13 +1846,17 @@ with tab_follow:
         st.code(due_view.iloc[pick_fu]["Follow-up Message"], language=None, wrap_lines=True)
 
         st.markdown("### ✏️ Update status")
-        fu_cols = ["Name", "Contacted", "Contacted On", "Manual Email"]
+        fu_cols = ["Name", "Contacted", "Contacted On", "Manual Email", "Notes"]
         st.data_editor(
             due_view[fu_cols],
             column_config={
                 "Contacted": st.column_config.SelectboxColumn("Status", options=CONTACTED_OPTIONS, width="medium"),
                 "Contacted On": st.column_config.TextColumn("Last change"),
                 "Manual Email": st.column_config.TextColumn("Manual Email", width="medium"),
+                "Notes": st.column_config.TextColumn(
+                    "📝 Notes", width="large",
+                    help="What happened last time and what to do next.",
+                ),
             },
             disabled=["Name", "Contacted On"],
             width="stretch",
