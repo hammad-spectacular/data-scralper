@@ -1515,9 +1515,32 @@ with tab_needs:
                     if "Notes" in shown.columns else [EMPTY_CELL] * len(shown)
                 ),
             })
-            sel = st.dataframe(
+            # Lead selector — st.data_editor doesn't support row selection in this
+            # Streamlit version, so a dropdown picks which lead's details to show.
+            # The table below still lets you edit Notes for every lead inline.
+            lead_options = [f"{n} — {t}" for n, t in zip(shown["Name"], shown["Town"])]
+            _default_idx = 0
+            if st.session_state.get("focus_pid") in pids:
+                _default_idx = pids.index(st.session_state["focus_pid"])
+            _sel_idx = st.selectbox(
+                "Select a lead to view details",
+                options=range(len(shown)),
+                format_func=lambda i: lead_options[i],
+                index=_default_idx,
+                key="pick_lead_select",
+            )
+            pos = _sel_idx
+            row = shown.iloc[pos]
+            pid = row["place_id"]
+            st.session_state["focus_pid"] = pid
+
+            editor_key = f"editor_needs_pick_{ver}"
+            sel = st.data_editor(
                 table, hide_index=True, width="stretch", height=min(35 * len(table) + 40, 340),
-                on_select="rerun", selection_mode="single-row", key="needs_table",
+                key=editor_key,
+                on_change=_on_edit, args=(editor_key, "needs"),
+                num_rows="fixed",
+                disabled=[c for c in table.columns if c != "📝 Notes"],
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
                     "Name": st.column_config.TextColumn("Name", width="medium"),
@@ -1542,15 +1565,6 @@ with tab_needs:
                     ),
                 },
             )
-            picked = list(sel.selection.rows) if sel is not None and sel.selection else []
-            if picked and picked != st.session_state.get("last_sel_rows") and picked[0] < len(pids):
-                st.session_state["focus_pid"] = pids[picked[0]]
-            st.session_state["last_sel_rows"] = picked
-            if st.session_state.get("focus_pid") not in pids:
-                st.session_state["focus_pid"] = pids[0]
-            pos = pids.index(st.session_state["focus_pid"])
-            row = shown.iloc[pos]
-            pid = row["place_id"]
 
             st.markdown("#### 2 · Contact them")
             with st.container(border=True, key="leadcard"):
