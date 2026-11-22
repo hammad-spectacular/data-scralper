@@ -529,7 +529,7 @@ def _store_and_filter(df: pd.DataFrame, label: str, hide_contacted: bool, only_n
 
 
 @st.cache_data(show_spinner=False)
-def _saved_leads(version: tuple[int, str]) -> pd.DataFrame | None:
+def _saved_leads(version: tuple[int, str, str]) -> pd.DataFrame | None:
     """All saved leads, prepared. `version` only exists so the cache refreshes when the DB changes."""
     return _prepare_saved(lead_store.load_leads())
 
@@ -545,6 +545,7 @@ def _followup_df(days: int) -> pd.DataFrame:
 _STRING_RESTORE = STRING_COLS + [
     "Website Status", "Social Link", "Phone Type", "WhatsApp Digits", "WhatsApp Link",
     "Facebook Search", "LinkedIn Search", "Google Search", "Source",
+    "Notes", "Manual Email",
 ]
 
 
@@ -585,28 +586,121 @@ def _scan_saved_leads() -> str:
     return msg
 
 
+# Which table column maps to which stored field. The tables name their columns
+# "Status" / "Notes" / "Manual Email"; older frames used "Contacted" / "📝 Notes".
+_EDIT_COLUMN_MAP = {
+    "Notes": "Notes",
+    "📝 Notes": "Notes",
+    "Status": "Contacted",
+    "Contacted": "Contacted",
+    "Manual Email": "Manual Email",
+    "✉️ Email": "Manual Email",
+    "Email": "Manual Email",
+}
+
+
+def _persist_edits(edited: dict, pids: list[str]) -> bool:
+    """Save the cells the user changed to cache.json AND leads.db (by place_id).
+
+    `edited` is what st.data_editor reports: {row_position: {column: value}}.
+    `pids` must hold the place_ids of the rows in the exact order the editor
+    showed them, so a row position can be traced back to its lead.
+    Returns True when something actually changed.
+    """
+    cache = st.session_state["cache"]
+    changed = False
+    for pos, changes in edited.items():
+        pos = int(pos)
+        if not 0 <= pos < len(pids):
+            continue
+        pid = pids[pos]
+        for col_name, value in changes.items():
+            field = _EDIT_COLUMN_MAP.get(col_name)
+            if field is None or field not in EDITABLE_DEFAULTS:
+                continue
+            value = _clean_field(field, value)
+            entry = cache.setdefault(pid, {})
+            if entry.get(field) != value:
+                entry[field] = value
+                changed = True
+                if field == "Contacted":        # the date drives the follow-up reminders
+                    if value == EDITABLE_DEFAULTS["Contacted"]:
+                        entry.pop("Contacted On", None)
+                    else:
+                        entry["Contacted On"] = date.today().isoformat()
+            # Straight into leads.db, so the edit survives a reload / a restart
+            # even if cache.json is lost.
+            lead_store.update_lead_field(pid, field, value)
+            if field == "Contacted":
+                lead_store.update_lead_field(pid, "Contacted On", entry.get("Contacted On", ""))
+    if changed:
+        save_cache(cache)
+    return changed
+
+
 def _on_edit(editor_key: str, view_name: str) -> None:
     """data_editor callback: persist only the cells the user changed, then rebuild both editors."""
     edited = (st.session_state.get(editor_key) or {}).get("edited_rows", {})
-    cache = st.session_state["cache"]
     if edited:
         if view_name == "followups":
             view = _followup_df(int(st.session_state.get("followup_days", 4)))
         elif view_name == "needs":
             view = _leads_view()          # must match the table's filter + order exactly
         else:
-            view = apply_cache_to_df(st.session_state["df"], cache)
-        if apply_edits(edited, view, cache):
-            save_cache(cache)
+            view = apply_cache_to_df(st.session_state["df"], st.session_state["cache"])
+        _persist_edits(edited, view["place_id"].tolist())
+    st.session_state["edit_ver"] += 1
+
+
+def _on_edit_pick(editor_key: str) -> None:
+    """data_editor callback for the '1 · Pick a lead' table.
+
+    Reads edited_rows from the editor's session state, maps each edited row
+    position back to the lead's place_id (using the stored pick_table_shown
+    frame), and persists Notes / Status / Email to both cache.json and
+    leads.db immediately — before the dataframe is re-queried for display.
+    """
+    edited = (st.session_state.get(editor_key) or {}).get("edited_rows", {})
+    shown = st.session_state.get("pick_table_shown")
+    if edited and shown is not None and not shown.empty:
+        _persist_edits(edited, shown["place_id"].tolist())
     st.session_state["edit_ver"] += 1
 
 
 def _set_lead_field(pid: str, field: str, key: str) -> None:
-    """Widget callback: save one field (Contacted / Manual Email) of one lead."""
+    """Widget callback: save one field (Contacted / Manual Email / Notes) of one lead."""
+    value = st.session_state[key]
+    value = _clean_field(field, value)
     cache = st.session_state["cache"]
-    if apply_edits({0: {field: st.session_state[key]}}, pd.DataFrame({"place_id": [pid]}), cache):
+    if apply_edits({0: {field: value}}, pd.DataFrame({"place_id": [pid]}), cache):
         save_cache(cache)
+    # Persist directly to leads.db so edits survive page reloads and app restarts
+    lead_store.update_lead_field(pid, field, value)
     st.session_state["edit_ver"] += 1
+
+
+def save_lead_edit(place_id: str, field: str, value: str) -> None:
+    """Persist a single lead field edit to both cache.json and leads.db."""
+    value = _clean_field(field, value)
+    cache = st.session_state["cache"]
+    entry = cache.setdefault(place_id, {})
+    if entry.get(field) != value:
+        entry[field] = value
+        save_cache(cache)
+    lead_store.update_lead_field(place_id, field, value)
+
+
+def _clean_field(field: str, value: Any) -> Any:
+    """Normalise one edited value so the cache and leads.db always agree."""
+    if value is None or (isinstance(value, float) and value != value):
+        return EDITABLE_DEFAULTS.get(field, "")
+    if field == "Manual Email":
+        return str(value).strip()
+    if field == "Notes":
+        return str(value)              # keep the user's exact text
+    if field == "Contacted" and value not in CONTACTED_OPTIONS:
+        return EDITABLE_DEFAULTS["Contacted"]
+    return value
 
 
 def _step_focus(pids: list[str], delta: int) -> None:
@@ -1494,6 +1588,26 @@ with tab_needs:
                 "X": "X / Twitter profile for this business.",
                 "YT": "YouTube channel for this business.",
             }
+            # Notes, Status and Email are the editable cells — every other column
+            # is locked so a stray click can't change a lead's details.
+            # Notes / Email fall back to leads.db when the cache has nothing yet.
+            _db_notes = lead_store.lead_fields(pids, "Notes")
+            _notes_col = [
+                (str(_v) if str(_v).strip() else _db_notes.get(_p, ""))
+                for _v, _p in zip(
+                    shown["Notes"].tolist() if "Notes" in shown.columns else [""] * len(shown),
+                    pids,
+                )
+            ]
+            _email_col = (
+                [str(_v) for _v in shown["Manual Email"].tolist()]
+                if "Manual Email" in shown.columns else [""] * len(shown)
+            )
+            _status_col = (
+                [_v if _v in CONTACTED_OPTIONS else CONTACTED_OPTIONS[0]
+                 for _v in shown["Contacted"].tolist()]
+                if "Contacted" in shown.columns else [CONTACTED_OPTIONS[0]] * len(shown)
+            )
             table = pd.DataFrame({
                 "Name": shown["Name"], "Town": shown["Town"], "Score": shown["Lead Score"],
                 "Website": _site_links,
@@ -1509,15 +1623,17 @@ with tab_needs:
                     (shown["Local Time"] + " " + shown["Call Window"].str[:1]).str.strip()
                     .replace("", NO_TIMEZONE)
                 ),
-                "Status": shown["Contacted"],
-                "📝 Notes": (
-                    shown["Notes"].map(lambda v: _filled(v, EMPTY_CELL))
-                    if "Notes" in shown.columns else [EMPTY_CELL] * len(shown)
-                ),
+                "Status": _status_col,
+                "Manual Email": _email_col,
+                "Notes": _notes_col,
             })
+            # Keep the displayed frame (with place_id) so the edit callback can
+            # map edited row positions back to the correct lead.
+            st.session_state["pick_table_shown"] = shown.reset_index(drop=True)
+
             # Lead selector — st.data_editor doesn't support row selection in this
             # Streamlit version, so a dropdown picks which lead's details to show.
-            # The table below still lets you edit Notes for every lead inline.
+            # The table below still lets you edit Notes and Status inline.
             lead_options = [f"{n} — {t}" for n, t in zip(shown["Name"], shown["Town"])]
             _default_idx = 0
             if st.session_state.get("focus_pid") in pids:
@@ -1538,9 +1654,9 @@ with tab_needs:
             sel = st.data_editor(
                 table, hide_index=True, width="stretch", height=min(35 * len(table) + 40, 340),
                 key=editor_key,
-                on_change=_on_edit, args=(editor_key, "needs"),
+                on_change=_on_edit_pick, args=(editor_key,),
                 num_rows="fixed",
-                disabled=[c for c in table.columns if c != "📝 Notes"],
+                disabled=[c for c in table.columns if c not in ("Status", "Notes", "Manual Email")],
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
                     "Name": st.column_config.TextColumn("Name", width="medium"),
@@ -1559,9 +1675,18 @@ with tab_needs:
                         )
                         for code in _codes
                     },
-                    "📝 Notes": st.column_config.TextColumn(
+                    "Status": st.column_config.SelectboxColumn(
+                        "Status", options=CONTACTED_OPTIONS, width="medium",
+                        help="Contact status for this lead.",
+                    ),
+                    "Manual Email": st.column_config.TextColumn(
+                        "✉️ Email", width="medium",
+                        help="An email address for this lead — add one if you find it.",
+                    ),
+                    "Notes": st.column_config.TextColumn(
                         "📝 Notes", width="large",
-                        help="Your own notes for this lead — what happened last time and what to do next.",
+                        help="Your own notes for this lead — what happened last time and what to do next. "
+                             "Saved to leads.db the moment you press Enter.",
                     ),
                 },
             )

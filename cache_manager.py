@@ -72,7 +72,16 @@ def apply_cache_to_df(df: pd.DataFrame, cache: dict[str, dict[str, Any]]) -> pd.
     )
     for field, default in EDITABLE_DEFAULTS.items():
         cached = pids.map(lambda p, f=field: cache.get(p, {}).get(f))
-        fallback = api_email if field == "Manual Email" else default
+        if field == "Manual Email":
+            fallback = api_email
+        elif field in out.columns:
+            # Keep whatever the lead already carries (e.g. the note saved in
+            # leads.db) instead of overwriting it with the empty default.
+            fallback = out[field].fillna("").astype(str)
+            if field == "Contacted":
+                fallback = fallback.where(fallback.str.strip().ne(""), default)
+        else:
+            fallback = default
         out[field] = cached.where(cached.notna(), fallback)
     out["Contacted On"] = pids.map(lambda p: cache.get(p, {}).get("Contacted On", "")).fillna("")
     return out
