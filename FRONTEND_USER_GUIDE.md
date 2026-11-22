@@ -332,6 +332,31 @@ right under the status and email boxes, for longer notes.
 Notes are saved per lead in `cache.json`, so they stay with that lead across restarts, in every
 tab, and in the CSV export. They never touch the lead's other data.
 
+### 🔎 Blank vs. "not found"
+
+No read-only cell is left silently empty. If the app could not find something, the cell says so
+instead of showing nothing:
+
+| Marker | Meaning |
+| --- | --- |
+| 🚫 No website | This business has no website of its own |
+| 📱 Social page only | It only exists on social media |
+| 🚫 No rating found | Ratings haven't been checked yet |
+| 🚫 No phone found | No phone number on record |
+| 🚫 No socials found | No social media links on record |
+| 🚫 No video found | No videos found for this lead |
+| 🚫 No director found | No decision-maker name on record |
+| Unknown timezone | Timezone couldn't be determined |
+| Not checked yet | This field hasn't been scanned yet |
+| Not found | Nothing on record for this field |
+| ⚠️ No data found | The search returned nothing for this lead |
+| — | Nothing to show in this cell |
+
+**These markers are display-only.** Editable columns — Manual Email, Contacted and Notes — are
+never filled with markers, so nothing you type can be mistaken for a placeholder. Quality Score
+and Reviews also stay empty until the website/ratings check has actually run, which keeps them
+sortable.
+
 ---
 
 ### Tab 3: 📅 Follow-ups & Stats

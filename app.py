@@ -1629,7 +1629,9 @@ with tab_needs:
                               on_change=_set_lead_field, args=(pid, "Manual Email", ekey))
 
                 # 📝 Your own notes for THIS lead — what happened last time, key points, next step.
-                nkey = f"notes_{pid}_{ver}"
+                # Stable key (pid only, not edit_ver) so typing isn't lost when another field
+                # (Contacted / Manual Email) bumps edit_ver and recreates the other widgets.
+                nkey = f"notes_{pid}"
                 st.text_area(
                     "📝 Notes for this lead",
                     value=str(row.get("Notes", "") or ""),
