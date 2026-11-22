@@ -167,7 +167,18 @@ ONLINE_FILTERS = (
     "🌐 Any online presence",
     "🎬 Makes videos for their biz",
     "🚫 No online presence at all",
+    "📍 Online, but no website of their own",
 )
+
+# Human labels for the per-platform link columns — used by the presence summary.
+_PRESENCE_LABELS = {
+    "FB": "Facebook", "IG": "Instagram", "TT": "TikTok",
+    "LI": "LinkedIn", "X": "X", "YT": "YouTube",
+}
+
+# Leads with these statuses have no website of their own (a social page as their
+# "website" still counts as no site — they don't own one).
+NO_SITE_STATUSES = ("NO WEBSITE", "SOCIAL ONLY")
 SOURCE_LABELS = {
     OVERTURE: "Overture Maps",
     GEOAPIFY: "Geoapify / OpenStreetMap",
@@ -460,6 +471,40 @@ def _needs_view(df: pd.DataFrame) -> pd.DataFrame:
     return sort_by_priority(needs)
 
 
+def _any_present(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    """True for every row where at least one of `cols` holds a non-empty value."""
+    out = pd.Series(False, index=df.index)
+    for c in cols:
+        if c in df.columns:
+            out |= df[c].fillna("").astype(str).str.strip().ne("")
+    return out
+
+
+def _online_presence(row: pd.Series, plat: dict[str, str]) -> tuple[str, str]:
+    """(where this business is online, the link to it) for one lead.
+
+    A phone number is never counted — almost every business has one, so it
+    tells you nothing about whether they have an online presence. What counts
+    is a social page, an email address, video they post for the business, and
+    their Google Maps listing.
+    """
+    labels: list[str] = []
+    for code, label in _PRESENCE_LABELS.items():
+        if plat.get(code):
+            labels.append(label)
+    email = str(row.get("Email", "") or "").strip() or str(row.get("Manual Email", "") or "").strip()
+    if email:
+        labels.append("Email")
+    if str(row.get("Video Content", "") or "").strip().upper() == "YES":
+        labels.append("🎬 Videos")
+    maps = str(row.get("Google Maps", "") or "").strip()
+    if maps:
+        labels.append("Google Maps")
+    # The link: their social page if they have one, else their Maps listing.
+    link = next((plat[code] for code in _PRESENCE_LABELS if plat.get(code)), "") or maps
+    return (" · ".join(labels) if labels else NO_PRESENCE), link
+
+
 def _leads_view() -> pd.DataFrame:
     """
     The current search results exactly as the Leads table shows them:
@@ -498,6 +543,19 @@ def _leads_view() -> pd.DataFrame:
             df = df[videos]
         elif online_choice == ONLINE_FILTERS[3]:      # 🚫 No online presence
             df = df[~(web | soc | videos)]
+        elif online_choice == ONLINE_FILTERS[4]:      # 📍 Online, but no website of their own
+            # They don't own a site, but they're reachable somewhere: a social
+            # page, an email, videos, or their Google Maps listing. A phone
+            # number is deliberately NOT a signal — nearly every business has
+            # one, so it says nothing about whether they're online.
+            email = _any_present(df, ["Email", "Manual Email"])
+            maps = _any_present(df, ["Google Maps"])
+            no_site = (
+                df["Website Status"].isin(NO_SITE_STATUSES)
+                if "Website Status" in df.columns
+                else pd.Series(False, index=df.index)
+            )
+            df = df[no_site & (soc | videos | email | maps)]
         if df.empty:
             return pd.DataFrame(columns=st.session_state["df"].columns)
 
