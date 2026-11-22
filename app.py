@@ -631,6 +631,34 @@ def _link(url: str, label: str, new_tab: bool = True) -> str:
     return f'<a href="{html.escape(url, quote=True)}"{target}>{label}</a>'
 
 
+# ---------------------------------------------------------------------------
+# Empty cells say so — nothing is left silently blank
+# ---------------------------------------------------------------------------
+# When a lookup came back empty we write the reason into the cell instead of
+# showing nothing, so "no website" can never be mistaken for "not looked up yet".
+
+NO_WEBSITE = "🚫 No website"
+SOCIAL_ONLY_TXT = "📱 Social page only"
+NO_SOCIALS = "🚫 No socials found"
+NO_VIDEO = "🚫 No video found"
+NO_PHONE = "🚫 No phone found"
+NO_DIRECTOR = "🚫 No director found"
+NO_RATING = "🚫 No rating found"
+NO_TIMEZONE = "Unknown timezone"
+NOT_CHECKED = "Not checked yet"
+NOT_FOUND = "Not found"
+EMPTY_CELL = "—"
+NO_DATA = "⚠️ No data found"
+
+
+def _filled(value, missing: str) -> str:
+    """The value, or an explicit 'we couldn't find it' label when it is empty."""
+    if value is None:
+        return missing
+    text = str(value).strip()
+    return text if text else missing
+
+
 LEADS_TABLE_CSS = """
 <style>
 .leads-table { border-collapse: collapse; width: 100%; font-size: 13px; background: #fff; border-radius: 12px; overflow: hidden; }
@@ -1164,8 +1192,33 @@ with tab_all:
         ]
         display_cols = [c for c in display_cols if c in df.columns]
 
+        # Nothing is left silently blank: the read-only cells say when we
+        # couldn't find something. Editable cells (Manual Email / Contacted /
+        # Notes) keep their real value — a marker there would be written back
+        # into the cache as if it were the user's own edit.
+        _all_view = df[display_cols].copy()
+        for _col, _missing in (
+            ("Website", NO_WEBSITE),
+            ("Social Link", NO_SOCIALS),
+            ("Socials", NO_SOCIALS),
+            ("Video Content", NOT_CHECKED),
+            ("Video Link", NO_VIDEO),
+            ("Video Sources", NOT_FOUND),
+            ("Phone", NO_PHONE),
+            ("Phone Type", NOT_FOUND),
+            ("Address", NOT_FOUND),
+            ("Local Time", NO_TIMEZONE),
+            ("Call Window", EMPTY_CELL),
+        ):
+            if _col in _all_view.columns:
+                _all_view[_col] = _all_view[_col].map(lambda v, m=_missing: _filled(v, m))
+        if "Rating" in _all_view.columns:
+            _all_view["Rating"] = _all_view["Rating"].map(
+                lambda v: f"{float(v):.1f}" if pd.notna(v) and str(v).strip() != "" else NO_RATING
+            )
+
         st.data_editor(
-            df[display_cols],
+            _all_view,
             column_config={
                 "Name": st.column_config.TextColumn("Name", width="medium"),
                 "Address": st.column_config.TextColumn("Address", width="large"),
@@ -1186,7 +1239,7 @@ with tab_all:
                          "YouTube feed or TikTok count) · NO = checked, nothing · UNKNOWN = login wall / blocked.",
                 ),
                 "Video Link": st.column_config.LinkColumn(
-                    "🎬 Video", width="medium", display_text="▶ Watch video",
+                    "🎬 Video", width="medium",
                     help="A direct link to one of their actual business videos (YouTube / TikTok / embedded on their site).",
                 ),
                 "Video Sources": st.column_config.TextColumn(
@@ -1203,7 +1256,10 @@ with tab_all:
                          "4 = no website · 5 = public socials · 6 = working website.",
                 ),
                 "Google Maps": st.column_config.LinkColumn("Google Maps", display_text="📍 Open map", width="small"),
-                "Rating": st.column_config.NumberColumn("⭐ Rating", format="%.1f"),
+                "Rating": st.column_config.TextColumn(
+                    "⭐ Rating", width="small",
+                    help="Their Google rating — or a note when we don't have one.",
+                ),
                 "Reviews": st.column_config.NumberColumn("Reviews"),
                 "Lead Score": st.column_config.ProgressColumn("Lead Score", min_value=0, max_value=100, format="%d"),
                 "Manual Email": st.column_config.TextColumn("Manual Email", width="medium"),
@@ -1221,6 +1277,11 @@ with tab_all:
             key=f"editor_all_{ver}",
             on_change=_on_edit,
             args=(f"editor_all_{ver}", "all"),
+        )
+        st.caption(
+            "🚫 / — / *Not found* in a cell means we looked and there was nothing there — "
+            "no website, no socials, no phone. Quality score and Reviews only appear once the "
+            "website check has run; Manual Email and Notes stay empty until you fill them in."
         )
 
         counts = df["Website Status"].value_counts()
@@ -1299,15 +1360,17 @@ with tab_online:
                 "Name": _col("Name"),
                 "Town": _col("Town"),
                 "Status": _col("Website Status").astype(str).str.title(),
-                "🎬 Videos": _col("Video Content"),
-                "🎬 Video": _col("Video Link"),
+                "🎬 Videos": _col("Video Content").map(lambda v: _filled(v, NOT_CHECKED)),
+                "🎬 Video": _col("Video Link").map(lambda v: _filled(v, NO_VIDEO)),
                 "🌐 Website": [
-                    "" if str(s) == "SOCIAL ONLY" else str(w)
+                    SOCIAL_ONLY_TXT if str(s) == "SOCIAL ONLY" else _filled(w, NO_WEBSITE)
                     for s, w in zip(_col("Website Status"), _col("Website"))
                 ],
-                "📱 Social": _col("Social Link"),
-                "📞 Phone": _col("Phone"),
-                "⭐ Rating": _col("Rating"),
+                "📱 Social": _col("Social Link").map(lambda v: _filled(v, NO_SOCIALS)),
+                "📞 Phone": _col("Phone").map(lambda v: _filled(v, NO_PHONE)),
+                "⭐ Rating": _col("Rating").map(
+                    lambda v: f"{float(v):.1f}" if pd.notna(v) and str(v).strip() != "" else NO_RATING
+                ),
                 "Priority": _col("Priority"),
                 "Score": _col("Lead Score"),
             })
@@ -1318,20 +1381,25 @@ with tab_online:
                     "Name": st.column_config.TextColumn("Name", width="medium"),
                     "🎬 Videos": st.column_config.TextColumn(
                         "🎬 Videos", width="small",
-                        help="YES = seen their videos · NO = checked, nothing · UNKNOWN = login wall.",
+                        help="YES = seen their videos · NO = checked, nothing · UNKNOWN = login wall · "
+                             "'Not checked yet' = the video scan hasn't run for this lead.",
                     ),
                     "🎬 Video": st.column_config.LinkColumn(
-                        "🎬 Their video", display_text="▶ Watch", width="medium",
+                        "🎬 Their video", width="medium",
                         help="A direct link to one of their actual business videos.",
                     ),
                     "🌐 Website": st.column_config.LinkColumn(
-                        "🌐 Their website", display_text="Open site", width="medium",
-                        help="Their existing website (blank for SOCIAL ONLY leads — no real site).",
+                        "🌐 Their website", width="medium",
+                        help="Their existing website. It says so when they don't have one.",
                     ),
                     "📱 Social": st.column_config.LinkColumn(
-                        "📱 Social", display_text="Open page", width="medium",
+                        "📱 Social", width="medium",
+                        help="Their best social page — or why we didn't find one.",
                     ),
-                    "⭐ Rating": st.column_config.NumberColumn("⭐ Rating", format="%.1f"),
+                    "⭐ Rating": st.column_config.TextColumn(
+                        "⭐ Rating", width="small",
+                        help="Their Google rating — or a note when we don't have one.",
+                    ),
                     "Priority": st.column_config.NumberColumn(
                         "Priority", format="%d", width="small",
                         help="1 = makes videos + no website · 2 = terrible · 3 = poor · 4 = no website · "
@@ -1340,7 +1408,9 @@ with tab_online:
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
                 },
             )
-            n_video_rows = int(_tbl["🎬 Video"].fillna("").astype(str).str.strip().ne("").sum())
+            n_video_rows = int(
+                _tbl["🎬 Video"].fillna("").astype(str).str.strip().ne("").ne(NO_VIDEO).sum()
+            )
             if n_video_rows:
                 st.caption(
                     f"▶ {n_video_rows:,} of {len(_tbl):,} leads have a direct link to one of their videos "
@@ -1403,14 +1473,14 @@ with tab_needs:
             st.caption("Click a row. Sorted by sales priority: 🎬 makes videos + no website → 🔴 terrible website → "
                        "🚫 no website → 📱 socials → 🌐 working site.")
             # Website link + one short link per social network — for EVERY row.
-            # Blank cell = we have no link (never invent one); "No Website" and
-            # friends stay visible in the Website Status text column.
+            # A lead with no website says so in the cell (never a silent blank);
+            # a SOCIAL ONLY lead says its "website" is really a social page.
             _site_links: list[str] = []
             _plat_rows: list[dict[str, str]] = []
             for _, _r in shown.iterrows():
                 _w = clean_url(_r.get("Website", ""))
                 _is_social = bool(_w) and is_social_url(_w)
-                _site_links.append("" if _is_social else _w)
+                _site_links.append(SOCIAL_ONLY_TXT if _is_social else _filled(_w, NO_WEBSITE))
                 _urls = split_socials(_r.get("Socials", "")) + split_socials(_r.get("Social Link", ""))
                 if _is_social:
                     _urls.append(_w)  # SOCIAL ONLY lead: their "website" IS a social page
@@ -1428,12 +1498,22 @@ with tab_needs:
                 "Name": shown["Name"], "Town": shown["Town"], "Score": shown["Lead Score"],
                 "Website": _site_links,
                 "Website Status": shown["Website Status"].str.title(),
-                "🎬 Videos": shown["Video Content"] if "Video Content" in shown.columns else [""] * len(shown),
-                **{code: [p.get(code, "") for p in _plat_rows] for code in _codes},
-                "Phone": shown["Phone"], "Type": shown["Phone Type"],
-                "Local time": (shown["Local Time"] + " " + shown["Call Window"].str[:1]).str.strip(),
+                "🎬 Videos": (
+                    shown["Video Content"].map(lambda v: _filled(v, NOT_CHECKED))
+                    if "Video Content" in shown.columns else [NOT_CHECKED] * len(shown)
+                ),
+                **{code: [p.get(code) or NO_DATA for p in _plat_rows] for code in _codes},
+                "Phone": shown["Phone"].map(lambda v: _filled(v, NO_PHONE)),
+                "Type": shown["Phone Type"].map(lambda v: _filled(v, NOT_FOUND)),
+                "Local time": (
+                    (shown["Local Time"] + " " + shown["Call Window"].str[:1]).str.strip()
+                    .replace("", NO_TIMEZONE)
+                ),
                 "Status": shown["Contacted"],
-                "📝 Notes": shown["Notes"] if "Notes" in shown.columns else "",
+                "📝 Notes": (
+                    shown["Notes"].map(lambda v: _filled(v, EMPTY_CELL))
+                    if "Notes" in shown.columns else [EMPTY_CELL] * len(shown)
+                ),
             })
             sel = st.dataframe(
                 table, hide_index=True, width="stretch", height=min(35 * len(table) + 40, 340),
@@ -1443,7 +1523,7 @@ with tab_needs:
                     "Name": st.column_config.TextColumn("Name", width="medium"),
                     "Website": st.column_config.LinkColumn(
                         "🌐 Website", width="large",
-                        help="Their real website — opens in a new tab. Blank when they don't have one.",
+                        help="Their real website — opens in a new tab. Says so when they don't have one.",
                     ),
                     "Website Status": st.column_config.TextColumn(
                         "Website Status", width="small",
@@ -1451,7 +1531,8 @@ with tab_needs:
                     ),
                     **{
                         code: st.column_config.LinkColumn(
-                            code, display_text=code, width="small", help=_social_help[code],
+                            code, width="small",
+                            help=_social_help[code] + " Shows — when they don't have one.",
                         )
                         for code in _codes
                     },
@@ -1691,18 +1772,20 @@ with tab_needs:
                                 f'rel="noopener noreferrer">{html.escape(u)}</a>')
 
                     facts = [
-                        ("Address", row["Address"]), ("Town", row["Town"]), ("Phone", row["Phone"]),
-                        ("International phone", row["Intl Phone"]), ("Website", _site),
+                        ("Address", row["Address"]), ("Town", row["Town"]),
+                        ("Phone", _filled(row["Phone"], NO_PHONE)),
+                        ("International phone", row["Intl Phone"]),
+                        ("Website", _site or NO_WEBSITE),
                         ("Website status", row["Website Status"].title()),
                         ("Quality score", f"{int(row['Quality Score'])}/100 (lower = worse)"
                          if pd.notna(row.get("Quality Score")) else ""),
-                        ("Socials", " · ".join(_info_socials)),
+                        ("Socials", " · ".join(_info_socials) or NO_SOCIALS),
                         ("Makes videos", {
                             "YES": "🎬 Yes — " + str(row.get("Video Sources", "") or "seen their videos"),
                             "NO": "🚫 No videos found",
                             "UNKNOWN": "❓ Unknown — " + str(row.get("Video Sources", "") or "couldn't verify"),
-                        }.get(str(row.get("Video Content", "")).strip().upper(), "")),
-                        ("Director", row["Director Name"]),
+                        }.get(str(row.get("Video Content", "")).strip().upper(), NOT_CHECKED)),
+                        ("Director", _filled(row["Director Name"], NO_DIRECTOR)),
                         ("Company number", str(row.get("Company Number", "") or "")),
                         ("Incorporated", str(row.get("Incorporated", "") or "")),
                         ("Source", row.get("Source", "")), ("First seen", str(row.get("First Seen", "") or "")),
@@ -1714,9 +1797,10 @@ with tab_needs:
                         if not (str(_v or "").strip() and str(_v) != "nan"):
                             continue
                         if _k == "Website":
-                            _val = _anchor(_v)
+                            _val = _anchor(_v) if str(_v).startswith("http") else html.escape(str(_v))
                         elif _k == "Socials":
-                            _val = " · ".join(_anchor(u) for u in _info_socials)
+                            _val = (" · ".join(_anchor(u) for u in _info_socials)
+                                    if _info_socials else html.escape(NO_SOCIALS))
                         else:
                             _val = html.escape(str(_v))
                         cells += f"<div>{html.escape(_k)}</div><div>{_val}</div>"
@@ -1739,8 +1823,18 @@ with tab_needs:
                     "Notes",
                 ]
                 edit_cols = [c for c in edit_cols if c in shown.columns]
+                # Read-only cells say when we couldn't find something; the
+                # editable ones (Manual Email / Contacted / Notes) stay clean.
+                _edit_view = shown[edit_cols].copy()
+                for _col, _missing in (
+                    ("Phone", NO_PHONE),
+                    ("Phone Type", NOT_FOUND),
+                    ("Director Name", NO_DIRECTOR),
+                ):
+                    if _col in _edit_view.columns:
+                        _edit_view[_col] = _edit_view[_col].map(lambda v, m=_missing: _filled(v, m))
                 st.data_editor(
-                    shown[edit_cols],
+                    _edit_view,
                     column_config={
                         "Name": st.column_config.TextColumn("Name", width="medium"),
                         "Town": st.column_config.TextColumn("Town"),
@@ -1813,22 +1907,26 @@ with tab_follow:
         rows = []
         for r in due_view.to_dict("records"):
             days_since = r["Days Since"]
+            _site = r.get("Website", "") or r.get("Social Link", "")
+            _site_cell = _link(_site, "🌐 Site") if _site else NO_WEBSITE
+            _fb = r.get("Facebook Search", "")
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(r['Name'])}</td>"
-                f"<td>{html.escape(r['Town'])}</td>"
+                f"<td>{html.escape(_filled(r['Town'], NOT_FOUND))}</td>"
                 f"<td>{html.escape(r['Contacted'])}</td>"
                 f"<td>{'unknown' if pd.isna(days_since) else f'{int(days_since)} days ago'}</td>"
-                f"<td>{html.escape(r['Phone'])}</td>"
-                f"<td>{html.escape(r['Phone Type'])}</td>"
+                f"<td>{html.escape(_filled(r['Phone'], NO_PHONE))}</td>"
+                f"<td>{html.escape(_filled(r['Phone Type'], NOT_FOUND))}</td>"
                 f"<td style='white-space:nowrap' title='{html.escape(r['Call Window'], quote=True)}'>"
                 f"{html.escape(r['Local Time'])} {html.escape(r['Call Window'][:1])}</td>"
-                f"<td>{_link(r['Follow-up WhatsApp Link'], 'WhatsApp')}</td>"
-                f"<td>{_link(r['Follow-up Mail Link'], 'Email ✉️', False)}</td>"
-                f"<td>{_link(r['Google Maps'], '📍 Map')}</td>"
-                f"<td>{_link(r.get('Website', '') or r.get('Social Link', ''), '🌐 Site')}</td>"
-                f"<td>{_link(r['Facebook Search'], 'Facebook 🔍')}</td>"
-                f"<td style='max-width:320px;white-space:pre-wrap'>{html.escape(str(r.get('Notes', '') or ''))}</td>"
+                f"<td>{_link(r['Follow-up WhatsApp Link'], 'WhatsApp') or EMPTY_CELL}</td>"
+                f"<td>{_link(r['Follow-up Mail Link'], 'Email ✉️', False) or EMPTY_CELL}</td>"
+                f"<td>{_link(r['Google Maps'], '📍 Map') or EMPTY_CELL}</td>"
+                f"<td>{_site_cell}</td>"
+                f"<td>{_link(_fb, 'Facebook 🔍') or EMPTY_CELL}</td>"
+                f"<td style='max-width:320px;white-space:pre-wrap'>"
+                f"{html.escape(str(r.get('Notes', '') or '') or EMPTY_CELL)}</td>"
                 "</tr>"
             )
         st.html(
