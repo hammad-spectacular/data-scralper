@@ -1640,9 +1640,15 @@ with tab_needs:
                     placeholder="e.g. Called 12 Nov — owner not available, ask for Dave. Their site is "
                                 "just a Facebook page. Follow up next week, mention video work.",
                     help="Saved to cache.json — it stays with this lead in every table, tab and export.",
-                    on_change=_set_lead_field,
-                    args=(pid, "Notes", nkey),
                 )
+                # Auto-save notes to cache when they differ from what's stored
+                if nkey in st.session_state:
+                    _cached_notes = cache.get(pid, {}).get("Notes", "")
+                    _current_notes = st.session_state[nkey]
+                    if _current_notes != _cached_notes:
+                        apply_edits({0: {"Notes": _current_notes}}, pd.DataFrame({"place_id": [pid]}), cache)
+                        save_cache(cache)
+                        st.session_state["edit_ver"] += 1
 
                 sender, contact = outreach_settings["sender_name"], outreach_settings["sender_phone"]
                 t_msg, t_site, t_prompt, t_info = st.tabs(
